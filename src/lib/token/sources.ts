@@ -2,6 +2,7 @@ import "server-only";
 import { SELL_PROBE_USD, sellProbe, USDC } from "./probe";
 import type { TokenSnapshot } from "./types";
 import { deployerHistory, lpLock, openingBlocks } from "./helius";
+import { jupiterToken } from "./jupiterToken";
 
 /*
  * Gathering a snapshot. Three independent sources, each optional:
@@ -190,7 +191,9 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
   // The three that need indexed history. Each failure is recorded and leaves its check unknown.
   const lp = await lpLock(pairs?.dexId ?? null, pairs?.deepestPair ?? null)
     .catch((e) => { errors.push(`LP lock: ${(e as Error).message}`); return null; });
-  const dep = await deployerHistory(mint).catch((e) => ({ unavailable: (e as Error).message }));
+  // One lookup, purely for the deployer's identity where the chain records no creator.
+  const jup = await jupiterToken(mint);
+  const dep = await deployerHistory(mint, { dev: jup?.dev, devMints: jup?.devMints }).catch((e) => ({ unavailable: (e as Error).message }));
   const open = await openingBlocks(mint, pairs?.poolAddresses ?? []).catch((e) => ({ unavailable: (e as Error).message }));
   const depWhy = dep && "unavailable" in dep ? dep.unavailable : null;
   const openWhy = open && "unavailable" in open ? open.unavailable : null;
@@ -220,12 +223,16 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
       lpLockedShare: lp && "lockedShare" in lp ? lp.lockedShare : null,
       lpTopHolderShare: lp && "topHolderShare" in lp ? lp.topHolderShare : null,
       top10Share: holders?.top10Share ?? null, topHolderShare: holders?.topHolderShare ?? null,
-      holderCount: null,
+      holderCount: jup?.holderCount ?? null,
       deployer: depOk?.deployer ?? null,
       deployerPriorMints: depOk?.priorMints ?? null,
       deployerPriorRugs: depOk?.priorDead ?? null,
       deployerChecked: depOk?.checked ?? null,
       deployerUnchecked: depWhy,
+      deployerHoldShare: depOk?.devHoldShare ?? null,
+      deployerAttributedMints: depOk?.attributedMints ?? null,
+      deployerIdentifiedBy: depOk?.identifiedBy ?? null,
+      launchpad: jup?.launchpad ?? null,
       sniperBundleShare: openOk?.share ?? null,
       sniperWallets: openOk?.wallets ?? null,
       openingSlots: openOk?.slots ?? null,

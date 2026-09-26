@@ -169,6 +169,25 @@ async function measureLpMint(lpMint: string): Promise<
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
+ * How much of the supply the deployer's own wallet still holds.
+ *
+ * One call: the wallet's token accounts for this mint, against the supply. Measured rather than read off
+ * an index, so it is a number we can stand behind. Null when it cannot be established, never zero —
+ * "we could not tell" and "they hold nothing" are opposite conclusions.
+ */
+async function deployerHolding(mint: string, owner: string): Promise<number | null> {
+  type Accounts = { value?: { account?: { data?: { parsed?: { info?: { tokenAmount?: { uiAmount?: number | null } } } } } }[] };
+  const accts = await rpc<Accounts>("getTokenAccountsByOwner", [owner, { mint }, { encoding: "jsonParsed" }]).catch(() => null);
+  if (!accts?.value) return null;
+  const held = accts.value.reduce((s, a) => s + (a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0), 0);
+  await sleep(SPACING_MS);
+  const supplyRes = await rpc<{ value?: { uiAmount: number | null } }>("getTokenSupply", [mint]).catch(() => null);
+  const supply = supplyRes?.value?.uiAmount ?? 0;
+  if (!supply) return null;
+  return Math.min(1, held / supply);
+}
+
+/**
  * The creator recorded on the asset, which for launchpad tokens is the deployer.
  *
  * Only a real `creators` entry counts. This used to fall back to the first *authority*, which is the
@@ -191,14 +210,25 @@ async function creatorOf(mint: string): Promise<string | null> {
  * still the single most predictive thing available at mint time — a wallet with a trail of dead launches
  * behind it is telling you what it does.
  */
-export async function deployerHistory(mint: string): Promise<
-  { deployer: string; priorMints: number; priorDead: number; checked: number } | { unavailable: string }
+export async function deployerHistory(mint: string, hint?: { dev?: string | null; devMints?: number | null }): Promise<
+  { deployer: string; priorMints: number; priorDead: number; checked: number; devHoldShare: number | null; attributedMints: number | null; identifiedBy: "creator" | "jupiter" }
+  | { unavailable: string }
 > {
   if (!isHelius()) return { unavailable: "needs a Helius RPC to read the asset's creator" };
-  const deployer = await creatorOf(mint);
-  // Plenty of tokens record no creator at all — an older SPL mint, or one not issued by a launchpad.
-  // That is a fact about the token, not a missing key, and saying so stops the wrong hunt.
-  if (!deployer) return { unavailable: "no creator recorded on this mint, so the deployer is unknown" };
+  /*
+   * Two ways to learn who deployed this. The creator recorded on the asset is first because it comes
+   * from the chain; plenty of mints record none, and Jupiter's `dev` covers those. Which one answered is
+   * carried out in `identifiedBy`, since one is a chain fact and the other is an index's opinion.
+   */
+  const fromCreator = await creatorOf(mint);
+  const deployer = fromCreator ?? hint?.dev ?? null;
+  if (!deployer) return { unavailable: "no deployer recorded for this mint by either the asset's creators or Jupiter" };
+  const identifiedBy: "creator" | "jupiter" = fromCreator ? "creator" : "jupiter";
+
+  // What the deployer still holds, measured here rather than taken from anyone's index. A deployer
+  // sitting on a large slice can sell it into your bid whatever their past record looks like.
+  await sleep(SPACING_MS);
+  const devHoldShare = await deployerHolding(mint, deployer);
   await sleep(SPACING_MS);
 
   type Page = { items?: { id?: string }[]; total?: number };
@@ -206,16 +236,25 @@ export async function deployerHistory(mint: string): Promise<
     creatorAddress: deployer, onlyVerified: false, page: 1, limit: 1000,
     displayOptions: { showFungible: true },
   });
-  if (!page) return { unavailable: `creator ${deployer.slice(0, 6)}… found, but its other mints could not be listed` };
+  /*
+   * A wallet that is not creator-indexed returns nothing here, which is not the same as having launched
+   * nothing. When that happens the count Jupiter attributes to the wallet is reported instead, clearly
+   * labelled, because it is a count with no outcomes attached — it cannot say whether those mints still
+   * trade, and that is the part that matters.
+   */
+  if (!page) {
+    return { deployer, identifiedBy, devHoldShare, attributedMints: hint?.devMints ?? null,
+      priorMints: 0, priorDead: 0, checked: 0 };
+  }
   const others = (page.items ?? []).map((i) => i.id).filter((id): id is string => !!id && id !== mint);
-  if (!others.length) return { deployer, priorMints: 0, priorDead: 0, checked: 0 };
+  if (!others.length) return { deployer, identifiedBy, devHoldShare, attributedMints: hint?.devMints ?? null, priorMints: 0, priorDead: 0, checked: 0 };
 
   // DexScreener takes 30 addresses at a time; one request settles them all.
   const sample = others.slice(0, MAX_PRIOR_MINTS);
   await sleep(SPACING_MS);
   type Pairs = { pairs?: { baseToken?: { address?: string }; liquidity?: { usd?: number } }[] | null };
   const r = await getJson<Pairs>(`https://api.dexscreener.com/latest/dex/tokens/${sample.join(",")}`);
-  if (!r) return { deployer, priorMints: others.length, priorDead: 0, checked: 0 };
+  if (!r) return { deployer, identifiedBy, devHoldShare, attributedMints: hint?.devMints ?? null, priorMints: others.length, priorDead: 0, checked: 0 };
   const liqBy = new Map<string, number>();
   for (const p of r.pairs ?? []) {
     const a = p.baseToken?.address; if (!a) continue;
@@ -224,7 +263,7 @@ export async function deployerHistory(mint: string): Promise<
   // A mint with no pair at all was never traded; only count ones that had a market and now have none.
   const traded = sample.filter((m) => liqBy.has(m));
   const dead = traded.filter((m) => (liqBy.get(m) ?? 0) < 1_000).length;
-  return { deployer, priorMints: others.length, priorDead: dead, checked: traded.length };
+  return { deployer, identifiedBy, devHoldShare, attributedMints: hint?.devMints ?? null, priorMints: others.length, priorDead: dead, checked: traded.length };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────

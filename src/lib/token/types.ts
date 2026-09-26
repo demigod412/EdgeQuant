@@ -59,6 +59,17 @@ export interface TokenSnapshot {
   deployerChecked: number | null;
   /** Why the deployer could not be traced, when it could not. */
   deployerUnchecked: string | null;
+  /** Share of supply the deployer's own wallet still holds. Measured on chain; null if unreadable. */
+  deployerHoldShare: number | null;
+  /**
+   * Mints Jupiter attributes to the deployer's wallet, used only when the wallet is not creator-indexed.
+   * A count with no outcomes attached: it cannot say whether those mints still trade.
+   */
+  deployerAttributedMints: number | null;
+  /** Which source named the deployer: the chain's own creators entry, or Jupiter's index. */
+  deployerIdentifiedBy: "creator" | "jupiter" | null;
+  /** The launchpad the token came from, when one is recorded. Context, not a verdict. */
+  launchpad: string | null;
 
   // ---- the opening blocks ----
   /**

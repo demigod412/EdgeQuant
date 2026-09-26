@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
+import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
@@ -19,6 +20,7 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpLockedShare: 1, lpTopHolderShare: 0,
   top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200,
   deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3, deployerUnchecked: null,
+  deployerHoldShare: 0, deployerAttributedMints: null, deployerIdentifiedBy: "creator", launchpad: null,
   sniperBundleShare: 0.02, sniperWallets: 3, openingSlots: 60, openingUnchecked: null,
   sellQuote: { probeIn: 50, probeOut: 48.5 }, sellPriceImpact: 0.01, sellProbeUsd: 50,
   fdvUsd: 900_000, volume24hUsd: 300_000, buys24h: 900, sells24h: 800,
@@ -127,7 +129,7 @@ describe("bugs found on the first live screen", () => {
   it("still reports a genuine first launch as a caution", () => {
     const c = find(clean({ deployer: "dep", deployerPriorMints: 0, deployerPriorRugs: 0, deployerChecked: 0 }), "deployerHistory");
     expect(c.verdict).toBe("warn");
-    expect(c.detail).toMatch(/First mint from this wallet/);
+    expect(c.detail).toMatch(/[Ff]irst mint/);
   });
 });
 
@@ -222,7 +224,7 @@ describe("bugs found on the second live screen", () => {
   });
 
   it("still falls back to a plain message when no reason was recorded", () => {
-    expect(find(clean({ deployerPriorMints: null, deployerPriorRugs: null }), "deployerHistory").detail).toMatch(/not traced/);
+    expect(find(clean({ deployerPriorMints: null, deployerPriorRugs: null }), "deployerHistory").detail).toMatch(/not identified/);
     expect(find(clean({ sniperBundleShare: null }), "sniperBundle").detail).toMatch(/not traced/);
   });
 });
@@ -434,5 +436,53 @@ describe("the sell probe is a size, and the size is part of the answer", () => {
     // A probe that followed SELL_PROBE_USD would make rows mean different things, and a large probe
     // against the small pools discovery finds would fail on arithmetic rather than on findings.
     expect(AUTO_PROBE_USD).toBe(50);
+  });
+});
+
+describe("the deployer, once Jupiter can name them", () => {
+  it("does not call it a first launch when mints are attributed but untraceable", () => {
+    // The old wording said "first mint from this wallet" whenever no mints came back from the creator
+    // index. With a count available from elsewhere, that claim is simply false.
+    const c = find(clean({ deployerPriorMints: 0, deployerPriorRugs: 0, deployerChecked: 0, deployerAttributedMints: 14 }), "deployerHistory");
+    expect(c.verdict).toBe("warn");
+    expect(c.detail).toMatch(/14 mints are attributed/);
+    expect(c.detail).not.toMatch(/[Ff]irst mint/);
+  });
+
+  it("fails a deployer sitting on a large slice of supply, however clean their record", () => {
+    const c = find(clean({ deployerHoldShare: 0.22 }), "deployerHistory");
+    expect(c.verdict).toBe("fail");
+    expect(c.hard).toBe(true);
+    expect(c.detail).toMatch(/22\.0% of supply/);
+  });
+
+  it("warns on a moderate holding without calling it disqualifying", () => {
+    expect(find(clean({ deployerHoldShare: 0.08 }), "deployerHistory").verdict).toBe("warn");
+    expect(find(clean({ deployerHoldShare: 0.01 }), "deployerHistory").verdict).toBe("pass");
+  });
+
+  it("says when the holding could not be read rather than treating it as nothing", () => {
+    const c = find(clean({ deployerHoldShare: null }), "deployerHistory");
+    expect(c.detail).toMatch(/could not be read/);
+  });
+
+  it("discloses when the deployer came from an index rather than the chain", () => {
+    const viaJup = find(clean({ deployerIdentifiedBy: "jupiter" }), "deployerHistory");
+    expect(viaJup.detail).toMatch(/Jupiter's index/);
+    expect(find(clean({ deployerIdentifiedBy: "creator" }), "deployerHistory").detail).not.toMatch(/Jupiter/);
+  });
+
+  it("reads the token record without trusting its authority fields", () => {
+    // Authorities are read off the mint account ourselves; a second-hand copy of a fact we hold is only
+    // a way to be wrong. Only identity and the mint count are taken from here.
+    const t = parseJupiterToken([{ id: "m", dev: "devwallet", launchpad: "pump.fun", holderCount: 42,
+      audit: { devMints: 3, devBalancePercentage: 9 }, mintAuthority: "someone", organicScore: 88 }], "m");
+    expect(t).toEqual({ dev: "devwallet", devMints: 3, launchpad: "pump.fun", holderCount: 42 });
+  });
+
+  it("returns null when the feed has no record of the mint", () => {
+    expect(parseJupiterToken([{ id: "other" }], "m")).toBeNull();
+    expect(parseJupiterToken([], "m")).toBeNull();
+    expect(parseJupiterToken(null, "m")).toBeNull();
   });
 });

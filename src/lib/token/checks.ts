@@ -30,6 +30,9 @@ export const LIMITS = {
   maxTransferFeeBps: 100,
   /** A deployer with prior rugs at or above this count has shown you what they do. */
   maxDeployerRugs: 1,
+  /** A deployer still holding this much can sell it into your bid whatever their past looks like. */
+  maxDeployerHold: 0.15,
+  warnDeployerHold: 0.05,
   minHolders: 50,
 } as const;
 
@@ -86,13 +89,56 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
       worst === 2 ? `${detail} A few wallets can exit into whatever bid exists.` : detail);
   }
 
-  // ---- 7. deployer history -----------------------------------------------------------------------
-  if (t.deployerPriorMints == null || t.deployerPriorRugs == null) out.push(unknown("deployerHistory", "Deployer history", t.deployerUnchecked ?? "Deployer's earlier mints not traced."));
-  else if (t.deployerPriorRugs >= LIMITS.maxDeployerRugs)
-    add("deployerHistory", "Deployer history", "fail", `${t.deployerPriorRugs} of the ${t.deployerChecked ?? t.deployerPriorMints} earlier mint${(t.deployerChecked ?? t.deployerPriorMints) === 1 ? "" : "s"} from this wallet that could be checked now have no liquidity — abandoned or drained, which look the same from outside. Either way it is a trail of dead launches.`, true);
-  else if (t.deployerPriorMints === 0) add("deployerHistory", "Deployer history", "warn", "First mint from this wallet — no track record either way.");
-  else if ((t.deployerChecked ?? 0) === 0) add("deployerHistory", "Deployer history", "warn", `${t.deployerPriorMints} earlier mint${t.deployerPriorMints === 1 ? "" : "s"} from this wallet, none of which ever traded — nothing to judge them on.`);
-  else add("deployerHistory", "Deployer history", "pass", `${t.deployerChecked} earlier mint${t.deployerChecked === 1 ? "" : "s"} from this wallet still have liquidity${t.deployerPriorMints > (t.deployerChecked ?? 0) ? ` (of ${t.deployerPriorMints} launched)` : ""}.`);
+  // ---- 7. the deployer: who they are, what they launched before, and what they still hold --------
+  if (t.deployerPriorMints == null || t.deployerPriorRugs == null) out.push(unknown("deployerHistory", "Deployer", t.deployerUnchecked ?? "Deployer not identified."));
+  else {
+    /*
+     * Three things, worst one wins.
+     *
+     * Their record is the strongest signal but the least available: a wallet that is not creator-indexed
+     * returns no mints, and that is not the same as having launched none. What they still HOLD is always
+     * measurable once they are identified, and it is a live risk regardless of history — a deployer
+     * sitting on a fifth of the supply can sell it into your bid however clean their past looks.
+     */
+    const hold = t.deployerHoldShare;
+    const attributed = t.deployerAttributedMints;
+    const mints = t.deployerPriorMints, dead = t.deployerPriorRugs, checked = t.deployerChecked ?? 0;
+
+    let rank = 0; // 0 pass, 1 warn, 2 fail
+    let history: string;
+    if (dead >= LIMITS.maxDeployerRugs) {
+      rank = 2;
+      history = `${dead} of the ${checked || mints} earlier mint${(checked || mints) === 1 ? "" : "s"} from this wallet that could be checked now have no liquidity — abandoned or drained, which look the same from outside. Either way it is a trail of dead launches.`;
+    } else if (mints === 0 && attributed != null && attributed > 1) {
+      // Jupiter counts the wallet's mints but says nothing about how they ended, so this is a warning
+      // about missing information, not a clean record.
+      rank = 1;
+      history = `${attributed} mints are attributed to this wallet, but none could be traced here, so whether any of them still trade is unknown.`;
+    } else if (mints === 0) {
+      rank = 1;
+      history = "First mint traceable to this wallet — no track record either way.";
+    } else if (checked === 0) {
+      rank = 1;
+      history = `${mints} earlier mint${mints === 1 ? "" : "s"} from this wallet, none of which ever traded — nothing to judge them on.`;
+    } else {
+      history = `${checked} earlier mint${checked === 1 ? "" : "s"} from this wallet still have liquidity${mints > checked ? ` (of ${mints} launched)` : ""}.`;
+    }
+
+    let holding = "";
+    if (hold == null) holding = " What the deployer still holds could not be read.";
+    else if (hold > LIMITS.maxDeployerHold) {
+      rank = 2;
+      holding = ` The deployer's own wallet still holds ${pct(hold)} of supply, which can be sold into whatever bid exists.`;
+    } else if (hold > LIMITS.warnDeployerHold) {
+      rank = Math.max(rank, 1);
+      holding = ` The deployer still holds ${pct(hold)} of supply.`;
+    } else holding = ` The deployer holds ${pct(hold)} of supply.`;
+
+    // Say which source named them. One is a chain record; the other is an index's attribution, and a
+    // reader deciding what to trust is entitled to know the difference.
+    const named = t.deployerIdentifiedBy === "jupiter" ? " Identified from Jupiter's index rather than an on-chain creator record." : "";
+    add("deployerHistory", "Deployer", rank === 2 ? "fail" : rank === 1 ? "warn" : "pass", `${history}${holding}${named}`, rank === 2);
+  }
 
   // ---- 8. opening-block cluster ------------------------------------------------------------------
   if (t.sniperBundleShare == null) out.push(unknown("sniperBundle", "Opening blocks", t.openingUnchecked ?? "Early buyers not traced."));

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.8.0 — a second look every four hours, and a deployer we can usually name
+
+### Re-screening on its own schedule
+One number was doing two jobs. Discovery needs a *long* window before spending a new-candidate slot on
+something already screened, because the recent feed returns the same tokens for hours and a short window
+would have it re-screening yesterday's finds instead of looking at today's. Watching a token you may be
+holding needs a *short* one.
+
+So they are separate now, with separate budgets: `TOKEN_DISCOVER_SKIP_HOURS` stays at 24, and
+`TOKEN_RESCREEN_HOURS` is **4**. Each discover run first re-screens up to six tracked tokens that have
+not been looked at in four hours, longest-unseen first, then goes looking for new ones. Neither can
+starve the other.
+
+This is what makes the exit signals real rather than theoretical. A screen is a snapshot and a snapshot
+cannot show a trend; two screens of the same mint can — liquidity falling, the round trip getting more
+expensive, one wallet growing. Tokens graded `avoid` are skipped (the verdict is in) and watching stops
+after 48 hours, so it does not grow without bound as the ledger fills.
+
+### The deployer, from Jupiter where the chain records none
+Our deployer lookup reads the `creators` entry off the asset, and plenty of mints record none — which is
+why every screen said *"no creator recorded on this mint"*. Jupiter indexes a `dev` field for the same
+mints, and that closes the gap.
+
+What is taken from it, and what is deliberately not:
+
+- **`dev`** — the deployer's address. An identity, used as the starting point for our own measurements.
+- **`audit.devMints`** — how many mints are attributed to that wallet. A *count with no outcomes*: it
+  cannot say whether any of them still trade, which is the part that matters. Reported as a warning about
+  missing information, never as a clean record. It also fixes a wrong claim: the check used to say "first
+  mint from this wallet" whenever the creator index returned nothing, which with a count available is
+  simply false.
+- **Not the mint and freeze authorities**, which we read off the mint account ourselves. A second-hand
+  copy of a fact we already hold is only a way to be wrong.
+- **Not `organicScore`** — an unexplained number, and importing someone else's judgement as though it
+  were a measurement is what the rest of this app exists to avoid.
+
+**And a new signal that is entirely our own measurement: what the deployer still holds.** One RPC call
+for the wallet's balance in this mint against the supply. A deployer sitting on more than 15% now fails
+the check outright regardless of their record, because that supply can be sold into whatever bid exists;
+above 5% it warns. Null when unreadable, never zero — "we could not tell" and "they hold nothing" are
+opposite conclusions. The check also states which source named the deployer, since one is a chain record
+and the other is an index's attribution.
+
 ## 0.7.1 — a cost figure without its size is not a measurement
 
 Raising `SELL_PROBE_USD` to a real position size exposed two problems with having one global probe.

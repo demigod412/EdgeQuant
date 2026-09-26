@@ -23,8 +23,11 @@ export async function GET(req: Request) {
   }
   if (job === "signals") return NextResponse.json({ ok: true, ...(await generateSignals(prisma)) });
   if (job === "discover") {
-    const { discoverAndScreen } = await import("@/lib/token/discover");
-    return NextResponse.json({ ok: true, ...(await discoverAndScreen(prisma)) });
+    // Watch first, then discover. A re-screen of something you may be holding is worth more than one
+    // more row in the record, and each has its own budget so neither starves the other.
+    const { discoverAndScreen, rescreenTracked } = await import("@/lib/token/discover");
+    const rescreened = await rescreenTracked(prisma).catch((e) => ({ error: (e as Error).message }));
+    return NextResponse.json({ ok: true, rescreened, ...(await discoverAndScreen(prisma)) });
   }
   if (job === "summary") {
     const { sendAlert, summaryMessage } = await import("@/lib/alerts");

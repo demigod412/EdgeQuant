@@ -33,8 +33,24 @@ export const DISCOVER_LIMIT = Number(process.env.TOKEN_DISCOVER_LIMIT) || 8;
 export const DISCOVER_MIN_LIQUIDITY = Number(process.env.TOKEN_DISCOVER_MIN_LIQUIDITY) || 5_000;
 /** Only tokens whose first pool is this new: the screener is about the early window. */
 export const DISCOVER_MAX_AGE_HOURS = Number(process.env.TOKEN_DISCOVER_MAX_AGE_HOURS) || 24;
-/** Don't screen the same mint again inside this window — a second row this soon says nothing new. */
-export const RESCREEN_HOURS = Number(process.env.TOKEN_RESCREEN_HOURS) || 24;
+/**
+ * Two windows, because two different jobs were sharing one number.
+ *
+ * DISCOVER_SKIP_HOURS stops a NEW-candidate slot being spent on something screened recently. It wants to
+ * be long: the recent feed returns the same tokens for hours, and a short window here would have
+ * discovery re-screening yesterday's finds instead of looking at today's.
+ *
+ * RESCREEN_HOURS is how often an already-screened token is looked at AGAIN, which is a different and
+ * genuinely useful thing: a re-screen next to the original is how liquidity draining, exit cost rising
+ * or concentration creeping up becomes visible. That wants to be short. It has its own budget so it
+ * cannot crowd out discovery.
+ */
+export const DISCOVER_SKIP_HOURS = Number(process.env.TOKEN_DISCOVER_SKIP_HOURS) || 24;
+export const RESCREEN_HOURS = Number(process.env.TOKEN_RESCREEN_HOURS) || 4;
+/** How many re-screens per run. Bounds the cost of watching, separately from the cost of discovering. */
+export const RESCREEN_LIMIT = Number(process.env.TOKEN_RESCREEN_LIMIT) || 6;
+/** Stop re-screening a token once its first screen is this old: by then the record has its answer. */
+export const RESCREEN_UNTIL_HOURS = Number(process.env.TOKEN_RESCREEN_UNTIL_HOURS) || 48;
 
 export interface Candidate {
   mint: string;
@@ -121,6 +137,51 @@ async function fetchRecent(): Promise<unknown> {
 }
 
 /**
+ * Look again at tokens already in the ledger.
+ *
+ * A screen is a snapshot, and a snapshot on its own cannot show a trend. Two screens of the same mint
+ * can: liquidity falling, the round trip getting more expensive, one wallet growing. Those are the exit
+ * signals, and they only exist if something takes the second look.
+ *
+ * Only tokens whose most recent screen is older than RESCREEN_HOURS and whose FIRST screen is inside
+ * RESCREEN_UNTIL_HOURS, so watching does not grow without bound as the ledger fills. Graded `avoid`
+ * tokens are skipped — the verdict is already in, and the budget is better spent on the ones a holder
+ * might actually be sitting in.
+ */
+export async function rescreenTracked(db: PrismaClient, opts: { now?: Date; limit?: number } = {}) {
+  const now = opts.now ?? new Date();
+  const limit = opts.limit ?? RESCREEN_LIMIT;
+  const { screenToken } = await import("./ledger");
+  const { AUTO_PROBE_USD } = await import("./probe");
+
+  // Most recent screen per mint, newest first, within the watch window.
+  const recent = await db.tokenScreen.findMany({
+    where: { screenedAt: { gte: new Date(now.getTime() - RESCREEN_UNTIL_HOURS * 3600_000) }, hiddenAt: null },
+    orderBy: { screenedAt: "desc" },
+    select: { mint: true, screenedAt: true, grade: true },
+  });
+  const latest = new Map<string, { screenedAt: Date; grade: string }>();
+  for (const r of recent) if (!latest.has(r.mint)) latest.set(r.mint, { screenedAt: r.screenedAt, grade: r.grade });
+
+  const due = [...latest.entries()]
+    .filter(([, v]) => v.grade !== "avoid" && now.getTime() - v.screenedAt.getTime() >= RESCREEN_HOURS * 3600_000)
+    .sort((a, b) => a[1].screenedAt.getTime() - b[1].screenedAt.getTime())   // longest unseen first
+    .slice(0, limit);
+
+  const results: { mint: string; grade: string }[] = [];
+  for (const [mint] of due) {
+    try {
+      const { grade } = await screenToken(db, mint, { source: "auto", probeUsd: AUTO_PROBE_USD });
+      results.push({ mint, grade: grade.grade });
+    } catch (e) {
+      results.push({ mint, grade: `failed: ${(e as Error).message.slice(0, 80)}` });
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return { watching: latest.size, due: due.length, rescreened: results.length, results };
+}
+
+/**
  * Screen whatever the feed offers that passes the filters, recording each as an ordinary screen.
  *
  * Each row is marked `source: "auto"` so the list can keep your own screens separate — a few hundred
@@ -133,7 +194,7 @@ export async function discoverAndScreen(db: PrismaClient, opts: { now?: Date; li
   const candidates = parseRecent(await fetchRecent());
   if (!candidates.length) return { seen: 0, screened: 0, skipped: {}, results: [] as { mint: string; grade: string }[] };
 
-  const since = new Date(now.getTime() - RESCREEN_HOURS * 3600_000);
+  const since = new Date(now.getTime() - DISCOVER_SKIP_HOURS * 3600_000);
   const already = await db.tokenScreen.findMany({
     where: { mint: { in: candidates.map((c) => c.mint) }, screenedAt: { gte: since } },
     select: { mint: true },
