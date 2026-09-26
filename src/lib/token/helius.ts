@@ -1,4 +1,5 @@
 import "server-only";
+import { isPumpSwap, pumpswapLpMint } from "./pumpswap";
 
 /*
  * The three checks that need indexed history rather than a single account read: whether the pool's LP
@@ -86,14 +87,56 @@ export async function lpLock(dexId: string | null, pairAddress: string | null): 
   if (dex.includes("pumpfun") || dex === "pump" || dex.includes("moonshot")) {
     return { lockedShare: 1, topHolderShare: 0, note: "liquidity is held by the launch program, not by an LP holder" };
   }
+  /*
+   * PumpSwap.
+   *
+   * "It is on PumpSwap" is NOT the same as "the LP is burned". The canonical pool created by pump.fun's
+   * migrate instruction does burn its LP, which locks the liquidity for good — but `withdraw` works
+   * identically on every PumpSwap pool, and anyone can create one. So a PumpSwap pool has to be measured
+   * like any other, not waved through.
+   *
+   * Every pool has its own Token-2022 LP mint at the PDA ["pool_lp_mint", pool], so the same burn and
+   * concentration arithmetic used for Raydium below applies once that address is derived.
+   *
+   * Seeds and program id verified against pump-fun/pump-public-docs and the PumpSwap IDL.
+   */
+  if (isPumpSwap(dex)) {
+    const lp = pumpswapLpMint(pairAddress);
+    if (!lp) return { unchecked: "this pool address is not a valid public key" };
+    await sleep(SPACING_MS);
+    /*
+     * The fail-safe that makes this implementation honest: a burned LP mint still EXISTS on chain with a
+     * supply of zero. A mint that is absent altogether means the derivation is wrong or this is not a
+     * PumpSwap pool — so "missing" must report unchecked and never "all of it was burned", which is what
+     * the supply-zero branch below would otherwise conclude. Wrong data must fail towards unknown.
+     */
+    const acct = await rpc<{ value?: unknown }>("getAccountInfo", [lp, { encoding: "base64" }]);
+    if (!acct?.value) return { unchecked: "this pool's LP mint could not be found on chain, so the lock cannot be confirmed" };
+    return measureLpMint(lp);
+  }
+
   if (!dex.startsWith("raydium")) return { unchecked: dex || "this DEX" };
 
-  const pool = await getJson<{ success?: boolean; data?: { lpMint?: { address?: string } }[] }>(
+  const pool = await getJson<{ success?: boolean; data?: { type?: string; lpMint?: { address?: string } }[] }>(
     `https://api-v3.raydium.io/pools/info/ids?ids=${pairAddress}`,
   );
   const lpMint = pool?.data?.[0]?.lpMint?.address;
-  if (!lpMint) return { unchecked: "Raydium did not return an LP mint for this pool" };
+  if (!lpMint) {
+    // A concentrated-liquidity pool has no LP token at all: liquidity sits in individual positions held
+    // as NFTs, each withdrawable by its owner. "No LP mint returned" was true but told you nothing.
+    const kind = (pool?.data?.[0]?.type ?? "").toLowerCase();
+    return { unchecked: kind.includes("concentrat")
+      ? "this is a concentrated-liquidity pool, which has no LP token — liquidity sits in separate positions that each owner can withdraw"
+      : "Raydium returned no LP mint for this pool" };
+  }
+  return measureLpMint(lpMint);
+}
 
+/** How much of an LP mint is burned or locked, and how much one live holder controls. */
+async function measureLpMint(lpMint: string): Promise<
+  { lockedShare: number; topHolderShare: number; note: string } | { unchecked: string } | null
+> {
+  {
   await sleep(SPACING_MS);
   const supply = await rpc<{ value?: { uiAmount: number | null } }>("getTokenSupply", [lpMint]);
   const total = supply?.value?.uiAmount ?? 0;
@@ -118,6 +161,7 @@ export async function lpLock(dexId: string | null, pairAddress: string | null): 
   const unaccounted = Math.max(0, total - held); // burned before the holder list was taken
   const lockedShare = Math.min(1, (lockedUi + unaccounted) / total);
   return { lockedShare, topHolderShare: Math.min(1, liveTop / total), note: "" };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────

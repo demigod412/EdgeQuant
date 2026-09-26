@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { openSignals, riskProfile } from "@/lib/queries";
+import { readLastScan } from "@/lib/pipeline/signals";
 import { sizePosition } from "@/lib/risk";
 import { fmtWat } from "@/lib/time";
 import { ENTRY_LABEL, MANAGE_LABEL, type EntryStyle, type ManageMode } from "@/lib/model/plan";
+import type { LastScan } from "@/lib/pipeline/signals";
 import { CopyButton } from "@/components/CopyButton";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, SectionTitle, cn, pct } from "@/components/ui";
@@ -24,12 +26,71 @@ const ticket = (s: TicketRow, units: number, risk: number) => [
   `Valid ${s.setup.horizonBars} bars, then close at market.`,
 ].join("\n");
 
+/**
+ * How strong a candidate is, in one word.
+ *
+ * Strength is the calibrated probability the target is hit before the stop — but a probability alone is
+ * not a recommendation, because a 65% chance of a 0.5R reward is a losing trade and a 45% chance of a 2R
+ * reward is a good one. So the edge is always shown beside it: that is the number with the arithmetic
+ * already done, and the only one that decides whether a call is made.
+ */
+function Strength({ p, edge, floor }: { p: number; edge: number; floor: number }) {
+  const label = edge >= floor ? "tradeable" : edge >= 0 ? "positive, below the floor" : "not worth taking";
+  return (
+    <span className="num whitespace-nowrap text-xs">
+      <span className="text-slate-100">{pct(p)}</span>
+      <span className="text-slate-500"> chance · </span>
+      <span className={cn(edge >= floor ? "text-edge" : edge >= 0 ? "text-amber" : "text-miss")}>
+        {edge >= 0 ? "+" : ""}{edge.toFixed(2)}R
+      </span>
+      <span className="text-slate-500"> {label}</span>
+    </span>
+  );
+}
+
+/** What the last scan found, so an empty board is legible rather than just empty. */
+function ScanPanel({ scan }: { scan: LastScan }) {
+  const reasons = Object.entries(scan.why).sort((a, b) => b[1] - a[1]);
+  return (
+    <Card className="mt-4">
+      <SectionTitle aside={`scanned ${fmtWat(new Date(scan.at), "d MMM HH:mm")}`}>Closest to firing</SectionTitle>
+      {scan.candidates.length === 0 ? (
+        <p className="text-sm text-slate-400">
+          No candidate even reached pricing on the last scan — every instrument failed its setup rule on
+          the latest bar. Nothing is wrong; the rules are waiting for a shape that is not there yet.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {scan.candidates.map((c) => (
+            <li key={`${c.instrument}-${c.setupKey}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+              <span className="min-w-0">
+                <span className="text-slate-200">{c.instrument}</span>
+                <span className={cn("ml-2 rounded-md border px-1.5 py-0.5 text-[10px]", c.side === "LONG" ? "border-edge/40 text-edge" : "border-miss/40 text-miss")}>{c.side}</span>
+                <span className="ml-2 text-xs text-slate-500">{c.setup} · {c.timeframe} · {c.holdHours}h max</span>
+              </span>
+              <Strength p={c.p} edge={c.edge} floor={scan.minEdge} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {reasons.length > 0 && (
+        <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
+          {scan.skipped} candidate{scan.skipped === 1 ? "" : "s"} passed over: {reasons.map(([r, n]) => `${n} ${r}`).join(", ")}.
+          A call is only made when expected R after fees, spread and slippage clears{" "}
+          <span className="num">{scan.minEdge}R</span>.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 /** Live calls: every one is already locked in the ledger, so what you see here is exactly what gets scored. */
 export default async function Signals() {
-  const [signals, risk, lastSync, counts] = await Promise.all([
+  const [signals, risk, lastSync, counts, scan] = await Promise.all([
     openSignals(), riskProfile(),
     prisma.instrument.findFirst({ where: { lastSyncAt: { not: null } }, orderBy: { lastSyncAt: "desc" }, select: { lastSyncAt: true } }),
     prisma.signal.groupBy({ by: ["state"], _count: true }),
+    readLastScan(prisma),
   ]);
   const settled = counts.filter((c) => c.state !== "OPEN").reduce((s, c) => s + c._count, 0);
 
@@ -45,9 +106,12 @@ export default async function Signals() {
       </header>
 
       {signals.length === 0 ? (
-        <EmptyState title="No open calls right now"
-          body={settled ? "Nothing currently passes its setup rule with a positive edge. That is normal: most bars are not opportunities." : "Run a sync and a model fit first — the app needs price history before it can price anything."}
-          action={{ href: "/backtest", label: "See the backtests" }} />
+        <>
+          <EmptyState title="No open calls right now"
+            body={scan ? "Nothing currently clears its setup rule with a positive edge after costs. That is the normal state: most bars are not opportunities, and the scan below shows what came closest." : "Run a sync and a model fit first — the app needs price history before it can price anything."}
+            action={{ href: "/backtest", label: "See the backtests" }} />
+          {scan && <ScanPanel scan={scan} />}
+        </>
       ) : (
         <ul className="space-y-2">
           {signals.map((s) => {

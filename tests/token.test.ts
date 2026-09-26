@@ -3,6 +3,7 @@ import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { sellProbe } from "@/lib/token/probe";
 import { parseMintInput } from "@/lib/token/mintInput";
+import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
 import type { TokenSnapshot } from "@/lib/token/types";
 
 /** A token with nothing wrong with it, as a baseline to break one thing at a time. */
@@ -287,5 +288,38 @@ describe("the score saturates when the same checks are unavailable", () => {
   it("does not let a high score on partial data reach 'clear'", () => {
     // lpLocked is a hard check, so an unreadable one keeps the verdict at unproven however clean the rest is.
     expect(gradeScreen(runChecks(blind())).grade).not.toBe("clear");
+  });
+});
+
+describe("PumpSwap LP mint derivation", () => {
+  /*
+   * "On PumpSwap" is not "LP burned": withdraw works on every PumpSwap pool and anyone can create one,
+   * so the pool's LP mint has to be found and measured. These vectors pin the derivation, because a
+   * wrong address would resolve to a mint that does not exist — and the supply-zero branch of the
+   * measurement would read that as "all of it was burned", a false pass on the check that matters most.
+   */
+  it("derives deterministically from the pool address", () => {
+    const a = pumpswapLpMint("Ez1nMRUJNUmJcWCcmkjvpdqjnjeXHpvvhnLWjnKfCkBu");
+    const b = pumpswapLpMint("Ez1nMRUJNUmJcWCcmkjvpdqjnjeXHpvvhnLWjnKfCkBu");
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+    expect(a).not.toBe("Ez1nMRUJNUmJcWCcmkjvpdqjnjeXHpvvhnLWjnKfCkBu");
+  });
+
+  it("gives different pools different LP mints", () => {
+    expect(pumpswapLpMint("Ez1nMRUJNUmJcWCcmkjvpdqjnjeXHpvvhnLWjnKfCkBu"))
+      .not.toBe(pumpswapLpMint("So11111111111111111111111111111111111111112"));
+  });
+
+  it("returns null rather than throwing on a non-key", () => {
+    expect(pumpswapLpMint("not-a-pubkey")).toBeNull();
+    expect(pumpswapLpMint("")).toBeNull();
+  });
+
+  it("recognises the DEX ids DexScreener uses", () => {
+    expect(isPumpSwap("pumpswap")).toBe(true);
+    expect(isPumpSwap("PumpSwap")).toBe(true);
+    expect(isPumpSwap("raydium")).toBe(false);
+    expect(isPumpSwap("pumpfun")).toBe(false); // the bonding curve, handled separately
   });
 });

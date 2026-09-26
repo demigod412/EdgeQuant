@@ -8,9 +8,34 @@ import { costInR, orderPlan, simulatePlan, type EntryStyle, type ManageMode, DEF
 import { sizePosition } from "../risk";
 import { ENTRY_RULES } from "../setups";
 import { barsOf, tfMs } from "./ingest";
+import { holdHours, type Timeframe } from "../instruments";
 import { brier } from "../model/stats";
 
 export const MODEL_VERSION = "eq-logit-v1";
+
+/** One priced candidate from the last scan: what the model said, and what it was worth after costs. */
+export interface ScanCandidate {
+  instrument: string; setup: string; setupKey: string; timeframe: string; side: string;
+  /** Calibrated probability the target is reached before the stop. */
+  p: number;
+  /** Expected R after fees, spread and slippage. Below the floor means not worth taking. */
+  edge: number;
+  rr: number;
+  holdHours: number;
+}
+export interface LastScan {
+  at: string; made: number; skipped: number; minEdge: number;
+  why: Record<string, number>;
+  candidates: ScanCandidate[];
+}
+export const LAST_SCAN_KEY = "lastScan";
+
+/** The last scan, for pages that need to explain an empty list. Null before the first one runs. */
+export async function readLastScan(db: PrismaClient): Promise<LastScan | null> {
+  const row = await db.appSetting.findUnique({ where: { key: LAST_SCAN_KEY } });
+  if (!row) return null;
+  try { return JSON.parse(row.value) as LastScan; } catch { return null; }
+}
 const ENTRY_TEXT: Record<string, string> = { market: "Market at bar close", limit: "Buy/sell LIMIT at", stop: "STOP entry at" };
 const defOf = (s: Setup): SetupDef => ({ key: s.key, side: s.side, atrTarget: s.atrTarget, atrStop: s.atrStop, horizonBars: s.horizonBars, entryRule: ENTRY_RULES[s.key] });
 
@@ -61,6 +86,14 @@ export async function generateSignals(db: PrismaClient, opts: { minEdgeR?: numbe
   const why: Record<string, number> = {};
   const skip = (reason: string) => { why[reason] = (why[reason] ?? 0) + 1; skipped++; };
   let bestEdge: { instrument: string; setup: string; edge: number } | null = null;
+  /*
+   * Every candidate that got far enough to be priced, whether it fired or not.
+   *
+   * Stored so the Signals page can show what came closest instead of an empty list with no account of
+   * itself. "Nothing passes right now" and "nothing is working" look identical until you can see that
+   * BTC/USDT scored 54% with -0.01R against a 0.02R floor.
+   */
+  const priced: ScanCandidate[] = [];
 
   for (const setup of setups) {
     const model = await activeFit(db, setup.id);
@@ -80,6 +113,8 @@ export async function generateSignals(db: PrismaClient, opts: { minEdgeR?: numbe
       const rawP = predictLogit(model.fit, x), calP = applyCalibration(model.cal, rawP);
       const edge = expectedR(calP, plan.rr, entry, stop, totalBps(inst));
       if (!bestEdge || edge > bestEdge.edge) bestEdge = { instrument: inst.display, setup: setup.key, edge };
+      priced.push({ instrument: inst.display, setup: setup.name, setupKey: setup.key, timeframe: setup.timeframe,
+        side: setup.side, p: calP, edge, rr: plan.rr, holdHours: holdHours(setup.timeframe as Timeframe, setup.horizonBars) });
       if (edge < minEdge) { skip(`edge below the ${minEdge}R floor`); continue; }
       const barTime = new Date(last.openTime);
       const exists = await db.signal.findUnique({ where: { instrumentId_setupId_barTime: { instrumentId: inst.id, setupId: setup.id, barTime } } });
@@ -99,6 +134,17 @@ export async function generateSignals(db: PrismaClient, opts: { minEdgeR?: numbe
       if (sent.ok) await db.signal.update({ where: { id: created.id }, data: { alertedAt: new Date() } });
     }
   }
+  // The strongest candidates, fired or not, newest scan wins. Written as one row rather than a table:
+  // it is a snapshot for the page to read, not a ledger, and nothing is ever judged against it.
+  const candidates = priced.sort((a, b) => b.edge - a.edge).slice(0, 10)
+    .map((c) => ({ ...c, p: Number(c.p.toFixed(4)), edge: Number(c.edge.toFixed(3)), rr: Number(c.rr.toFixed(2)) }));
+  const scan: LastScan = { at: new Date().toISOString(), made, skipped, minEdge, why, candidates };
+  await db.appSetting.upsert({
+    where: { key: LAST_SCAN_KEY },
+    update: { value: JSON.stringify(scan) },
+    create: { key: LAST_SCAN_KEY, value: JSON.stringify(scan) },
+  });
+
   // bestEdge is the honest measure of how close anything came: an edge of -0.4R means nothing was
   // remotely tradeable, while -0.01R against a 0.02R floor means the next bar could well fire.
   return { made, skipped, why, bestEdge: bestEdge ? { ...bestEdge, edge: Number(bestEdge.edge.toFixed(3)) } : null };

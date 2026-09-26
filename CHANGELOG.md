@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.6.0 — day trading, and an empty board that explains itself
+
+### PumpSwap LP locks are now measured, not waved through
+Verified against pump-fun/pump-public-docs and the PumpSwap IDL: every pool has its own Token-2022 LP
+mint at the PDA `["pool_lp_mint", pool]` under program `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`, so
+the same burn-and-concentration arithmetic already used for Raydium applies once that address is derived.
+
+The tempting shortcut would have been to pass every PumpSwap pool, since pump.fun's canonical migration
+pool burns its LP. That would have been wrong and dangerous: `withdraw` works identically on *every*
+PumpSwap pool and anyone can create one, so a non-canonical pool can be drained. Each pool is measured.
+
+The derivation carries a deliberate fail-safe. A burned LP mint still exists on chain with a supply of
+zero, so an *absent* mint means the derivation is wrong — not that the LP was burned. Missing reports
+unchecked, because the supply-zero branch would otherwise conclude "all of it was burned": a false pass
+on the single most consequential check in the screener. Wrong data must fail towards unknown.
+
+Also: a Raydium pool with no LP mint is usually a concentrated-liquidity pool, which has no LP token at
+all — liquidity sits in individual positions that each owner can withdraw. It now says that instead of
+"Raydium did not return an LP mint". And the sentence that read "LP lock is not checkable on Raydium did
+not return an LP mint for this pool" is fixed; the template assumed the reason was always a DEX name.
+
+### Retuned for day trading and scalping, with a six-hour ceiling
+The shipped setups were 4h bars on 12–18 bar horizons — two to three days — and a daily one on six bars,
+which is six days. Every setup now runs on 1h bars (day trading, 4–6 hour barriers) or 15m bars (scalps,
+2–3 hours), and `MAX_HOLD_HOURS = 6` is asserted by a test rather than merely intended, because a
+horizon is one number away from quietly becoming a swing trade again. Three scalp setups were added,
+reusing the hourly rules by reference so a fix cannot drift between them. 15m and 1h bars are now
+ingested, and the provider timeframe maps cover them.
+
+Expect *fewer* calls, not more. Costs are a fixed toll per round trip while the target shrinks with the
+bar, so the same 10–15bps eats a far larger share of a 15m ATR than a 4h one. Candidates pricing out
+with negative edge is the arithmetic being honest.
+
+**Fix: `ensureSeeds` only synced a setup's name and description**, so changing a timeframe in code left
+existing rows on the old one and the change silently did nothing — the same shape of bug as a league
+allowlist that was never wired up. Timeframe, side, barriers and horizon are all synced now.
+
+### An empty Signals board now accounts for itself
+"No open calls" and "nothing is working" looked identical. Every candidate that gets far enough to be
+priced is now recorded with the scan, and the page shows the ten closest with the model's probability,
+the expected R after costs, and whether each is tradeable, positive-but-below-floor, or not worth
+taking — plus the tally of why the rest were passed over. Strength is shown as a probability *and* an
+edge, deliberately: a 65% chance of 0.5R is a losing trade and 45% of 2R is a good one, so a probability
+on its own is not a recommendation.
+
 ## 0.5.6 — why every screen scored the same
 
 - **The score was reporting the data tier, not the token.** Five unrelated tokens all came back 66/100,

@@ -147,6 +147,8 @@ describe("risk and sizing", () => {
 });
 
 import { orderPlan, simulatePlan, costInR, type PlanConfig } from "@/lib/model/plan";
+import { MAX_HOLD_HOURS, TIMEFRAMES, holdHours, type Timeframe } from "@/lib/instruments";
+import { ENTRY_RULES, SETUP_SEEDS } from "@/lib/setups";
 
 describe("entry styles and trade management", () => {
   const bar = (o: number, h: number, l: number, c = l, i = 0): Bar => ({ openTime: i, open: o, high: h, low: l, close: c, volume: 1 });
@@ -308,5 +310,36 @@ describe("purged walk-forward", () => {
     expect(purged.brier).toBeGreaterThan(0);
     expect(purged.trades).toBeLessThanOrEqual(plain.trades + 5);       // same signals, cleaner training
     expect(purged.calibration.length).toBeGreaterThan(0);
+  });
+});
+
+describe("day-trading and scalping horizons", () => {
+  /*
+   * The point of the retune: a setup's time barrier is horizonBars bars of its own timeframe, and the
+   * shipped setups were 4h × 12–18 bars (two to three days) and 1d × 6 (six days). Nothing may now be
+   * held longer than six hours, and that is asserted rather than trusted — a horizon is one number and
+   * one timeframe away from quietly becoming a swing trade again.
+   */
+  it("holds nothing longer than MAX_HOLD_HOURS", () => {
+    for (const s of SETUP_SEEDS) {
+      const held = holdHours(s.timeframe as Timeframe, s.horizonBars);
+      expect(held, `${s.key} holds for ${held}h`).toBeLessThanOrEqual(MAX_HOLD_HOURS);
+      expect(held, `${s.key} has no horizon`).toBeGreaterThan(0);
+    }
+  });
+
+  it("only uses timeframes the app actually ingests", () => {
+    for (const s of SETUP_SEEDS) expect(TIMEFRAMES).toContain(s.timeframe);
+  });
+
+  it("gives every setup an entry rule", () => {
+    // A setup with no rule takes every bar as a candidate, which is not what any of these describe.
+    for (const s of SETUP_SEEDS) expect(ENTRY_RULES[s.key], `${s.key} has no entry rule`).toBeTypeOf("function");
+  });
+
+  it("keeps a scalp tier and a day-trading tier rather than collapsing into one", () => {
+    const tfs = new Set(SETUP_SEEDS.map((s) => s.timeframe));
+    expect(tfs.has("15m")).toBe(true);
+    expect(tfs.has("1h")).toBe(true);
   });
 });

@@ -4,7 +4,7 @@ import { rankUniverse, volTargetWeights, circuitBreaker, correlation, effectiveB
 import { brier } from "../model/stats";
 import { barsOf } from "./ingest";
 
-const BARS_PER_YEAR: Record<string, number> = { "1h": 8760, "4h": 2190, "1d": 365 };
+const BARS_PER_YEAR: Record<string, number> = { "15m": 35_040, "1h": 8760, "4h": 2190, "1d": 365 };
 
 /** Rank the universe, size it by volatility, and store the snapshot so the choice can be reviewed later. */
 export async function rebuildPortfolio(db: PrismaClient, opts: { timeframe?: string; targetVol?: number; longSlots?: number; maxTotalRiskPct?: number } = {}) {

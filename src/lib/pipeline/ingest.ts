@@ -10,14 +10,24 @@ export async function ensureSeeds(db: PrismaClient) {
     await db.instrument.upsert({ where: { venue_symbol: { venue: s.venue, symbol: s.symbol } }, update: { display: s.display }, create: { ...s } });
   }
   for (const s of SETUP_SEEDS) {
-    await db.setup.upsert({ where: { key: s.key }, update: { name: s.name, description: s.description }, create: { ...s } });
+    // Timeframe, side, barriers and horizon are synced, not just the label. They were not, so changing a
+    // setup's timeframe in code would leave existing rows on the old one and the change would silently
+    // do nothing. Nothing in the UI edits setups, so code is their only source of truth.
+    await db.setup.upsert({
+      where: { key: s.key },
+      update: { name: s.name, description: s.description, timeframe: s.timeframe, side: s.side,
+        atrTarget: s.atrTarget, atrStop: s.atrStop, horizonBars: s.horizonBars },
+      create: { ...s },
+    });
   }
 }
 
 /** Pull closed bars for every enabled instrument and timeframe. Only new bars are written; history is never rewritten. */
 export async function ingestCandles(db: PrismaClient, opts: { limit?: number; timeframes?: Timeframe[]; source?: (market: "CRYPTO" | "FX") => Promise<PriceSource | null> } = {}) {
   await ensureSeeds(db);
-  const limit = opts.limit ?? 1000, tfs = opts.timeframes ?? (["4h", "1d"] as Timeframe[]);
+  // 15m and 1h are what the day-trading and scalping setups are fitted on; 4h and 1d stay for context
+  // and for the backtest page.
+  const limit = opts.limit ?? 1000, tfs = opts.timeframes ?? (["15m", "1h", "4h", "1d"] as Timeframe[]);
   const report: Record<string, unknown> = {};
   const instruments = await db.instrument.findMany({ where: { enabled: true } });
   for (const inst of instruments) {

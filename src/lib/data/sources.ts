@@ -50,9 +50,9 @@ export function parseTwelveData(values: TdValue[], tf: Timeframe): Bar[] {
   })).filter((b) => Number.isFinite(b.close) && Number.isFinite(b.openTime)).sort((a, b) => a.openTime - b.openTime), tf);
 }
 
-const BINANCE_TF: Record<Timeframe, string> = { "1h": "1h", "4h": "4h", "1d": "1d" };
-const BYBIT_TF: Record<Timeframe, string> = { "1h": "60", "4h": "240", "1d": "D" };
-const TD_TF: Record<Timeframe, string> = { "1h": "1h", "4h": "4h", "1d": "1day" };
+const BINANCE_TF: Record<Timeframe, string> = { "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d" };
+const BYBIT_TF: Record<Timeframe, string> = { "15m": "15", "1h": "60", "4h": "240", "1d": "D" };
+const TD_TF: Record<Timeframe, string> = { "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1day" };
 
 /*
  * data-api.binance.vision, not api.binance.com, by default.

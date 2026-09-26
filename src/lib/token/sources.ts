@@ -211,7 +211,11 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
       hasTransferHook: m?.hasTransferHook ?? null,
       liquidityUsd: pairs?.liquidityUsd ?? null,
       dexId: pairs?.dexId ?? null,
-      lpUnchecked: lp && "unchecked" in lp ? `LP lock is not checkable on ${lp.unchecked}.` : null,
+      // The reason is a sentence when it explains itself and a DEX name when it does not; the old
+      // template assumed the latter and produced "not checkable on Raydium did not return an LP mint".
+      lpUnchecked: lp && "unchecked" in lp
+        ? (/\s/.test(lp.unchecked) ? `${lp.unchecked[0].toUpperCase()}${lp.unchecked.slice(1)}.` : `LP lock is not checkable on ${lp.unchecked}.`)
+        : null,
       lpLockedShare: lp && "lockedShare" in lp ? lp.lockedShare : null,
       lpTopHolderShare: lp && "topHolderShare" in lp ? lp.topHolderShare : null,
       top10Share: holders?.top10Share ?? null, topHolderShare: holders?.topHolderShare ?? null,
