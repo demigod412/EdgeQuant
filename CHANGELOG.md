@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3 — pace Twelve Data to the plan it is on
+
+- **Fix: the first FX sync would have looked like a hang.** Requests were spaced 400ms apart for every
+  source, but Twelve Data's free plan allows 8 a minute. Five pairs across two timeframes is ten requests
+  inside five seconds, so most would be answered `429` and then wait out a 31-second retry each. A source
+  can now declare its own minimum spacing (`minSpacingMs`), Twelve Data sets 8 seconds, and the ingest
+  takes whichever is longer. `TWELVE_DATA_SPACING_MS` overrides it if you upgrade the plan.
+
 ## 0.5.2 — the reason there were no candles
 
 - **Fix: the default crypto source is blocked from most cloud IPs.** `api.binance.com` answers a great

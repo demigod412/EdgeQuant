@@ -40,7 +40,8 @@ export async function ingestCandles(db: PrismaClient, opts: { limit?: number; ti
         }
         per[tf] = fresh.length;
       } catch (e) { per[tf] = `error: ${(e as Error).message}`; }
-      await new Promise((r) => setTimeout(r, Number(process.env.SOURCE_DELAY_MS ?? 400)));
+      // Each source sets its own floor when its rate limit is tighter than the default.
+      await new Promise((r) => setTimeout(r, Math.max(Number(process.env.SOURCE_DELAY_MS ?? 400), src.minSpacingMs ?? 0)));
     }
     await db.instrument.update({ where: { id: inst.id }, data: { lastSyncAt: new Date() } });
     report[inst.display] = per;

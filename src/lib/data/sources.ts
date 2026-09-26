@@ -7,7 +7,18 @@ import { TF_MS, type Timeframe } from "../instruments";
  *   Binance / Bybit — public, no key, generous limits
  *   Twelve Data     — free key (800 requests/day) for FX
  */
-export interface PriceSource { venue: "BINANCE" | "BYBIT" | "TWELVE_DATA"; name: string; candles(symbol: string, tf: Timeframe, limit: number): Promise<Bar[]>; test(): Promise<{ ok: boolean; message: string }> }
+export interface PriceSource {
+  venue: "BINANCE" | "BYBIT" | "TWELVE_DATA"; name: string;
+  /**
+   * Minimum gap between requests to this source, when its own rate limit is tighter than the default.
+   * Twelve Data's free plan allows 8 requests a minute; at the default spacing the ten requests an FX
+   * sync makes would arrive inside five seconds, and most would be answered 429 and then sit through a
+   * 31-second retry — slow enough to look like the app had hung.
+   */
+  minSpacingMs?: number;
+  candles(symbol: string, tf: Timeframe, limit: number): Promise<Bar[]>;
+  test(): Promise<{ ok: boolean; message: string }>;
+}
 
 async function getJson<T>(url: string, headers: Record<string, string> = {}): Promise<T> {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -68,6 +79,7 @@ export const bybit = (base = process.env.BYBIT_BASE_URL ?? "https://api.bybit.co
 });
 export const twelveData = (key: string, base = process.env.TWELVE_DATA_BASE_URL ?? "https://api.twelvedata.com"): PriceSource => ({
   venue: "TWELVE_DATA", name: "Twelve Data",
+  minSpacingMs: Number(process.env.TWELVE_DATA_SPACING_MS) || 8_000, // free plan: 8 requests/minute
   async candles(symbol, tf, limit) {
     const r = await getJson<{ values?: TdValue[]; status?: string; message?: string }>(`${base}/time_series?symbol=${encodeURIComponent(symbol)}&interval=${TD_TF[tf]}&outputsize=${Math.min(5000, limit)}&format=JSON&apikey=${key}`);
     if (r.status === "error") throw new Error(r.message ?? "Twelve Data error");
