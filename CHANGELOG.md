@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.2 — the reason there were no candles
+
+- **Fix: the default crypto source is blocked from most cloud IPs.** `api.binance.com` answers a great
+  many hosting ranges with HTTP 451 ("Service unavailable from a restricted location"), and Bybit answers
+  the same addresses with a CloudFront 403. A server that could reach neither had no crypto source at
+  all, stored no candles, and so emptied Signals, Portfolio, Backtest and Record together — the app
+  working exactly as written, fetching nothing. The default is now
+  `data-api.binance.vision`, Binance's own market-data-only endpoint: no key, no account, identical
+  klines response, and not under that restriction. `BINANCE_BASE_URL` and `BYBIT_BASE_URL` override it
+  and are both documented in `.env.example` now.
+
+This was the actual cause of the empty pages reported in 0.5.0, which I had put down to the missing seed
+file. The instruments were already there — `ensureSeeds` creates them on every ingest — so the seed was a
+real bug but not this one. What was missing was every single candle, and nothing in the app said so until
+`npm run diagnose` pinged the sources from the server itself.
+
 ## 0.5.1 — a deploy that shipped nothing and called it success
 
 - **Fix: `update` reported success after a failed pull.** The rsync deploy path ran

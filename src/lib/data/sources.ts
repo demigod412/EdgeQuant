@@ -43,7 +43,17 @@ const BINANCE_TF: Record<Timeframe, string> = { "1h": "1h", "4h": "4h", "1d": "1
 const BYBIT_TF: Record<Timeframe, string> = { "1h": "60", "4h": "240", "1d": "D" };
 const TD_TF: Record<Timeframe, string> = { "1h": "1h", "4h": "4h", "1d": "1day" };
 
-export const binance = (base = process.env.BINANCE_BASE_URL ?? "https://api.binance.com"): PriceSource => ({
+/*
+ * data-api.binance.vision, not api.binance.com, by default.
+ *
+ * api.binance.com answers a great many cloud IP ranges with HTTP 451 ("restricted location"), and Bybit
+ * answers the same addresses with a CloudFront 403 — so a server that could reach neither had no crypto
+ * source at all and silently stored no candles, which empties every page downstream of price history.
+ * The .vision host is Binance's own market-data-only endpoint: no key, no account, identical klines
+ * response, and not under that restriction. Override with BINANCE_BASE_URL if your server can reach the
+ * main API and you would rather use it.
+ */
+export const binance = (base = process.env.BINANCE_BASE_URL ?? "https://data-api.binance.vision"): PriceSource => ({
   venue: "BINANCE", name: "Binance",
   async candles(symbol, tf, limit) { return parseBinance(await getJson<unknown[][]>(`${base}/api/v3/klines?symbol=${symbol}&interval=${BINANCE_TF[tf]}&limit=${Math.min(1000, limit)}`), tf); },
   async test() { try { const b = await this.candles("BTCUSDT", "1h", 5); return { ok: b.length > 0, message: `Binance: ${b.length} bars, last close ${b.at(-1)?.close}` }; } catch (e) { return { ok: false, message: `Binance: ${(e as Error).message}` }; } },
