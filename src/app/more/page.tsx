@@ -2,6 +2,7 @@ import Link from "next/link";
 export const metadata = { title: "More" };
 const links = [
   ["/portfolio", "Portfolio", "Ranked universe, volatility-targeted weights, risk state and carry"],
+  ["/tokens", "Token screener", "What can be checked on a token before you buy: authorities, liquidity, distribution, and whether it can actually be sold"],
   ["/risk", "Risk sizing", "Account size, risk per trade, Kelly fraction and exposure caps"],
   ["/journal", "Journal", "Log your own trades and compare them with the plan"],
   ["/backtest", "Backtests", "Walk-forward results per setup, with costs"],

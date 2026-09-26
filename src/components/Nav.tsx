@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BookOpen, Calculator, FlaskConical, LineChart, Menu, NotebookPen, PieChart, Settings } from "lucide-react";
+import { Activity, BookOpen, Calculator, FlaskConical, LineChart, Menu, NotebookPen, PieChart, Settings, ShieldAlert } from "lucide-react";
 import { cn } from "./ui";
 
 const TABS = [
@@ -12,7 +12,7 @@ const TABS = [
   { href: "/journal", label: "Journal", icon: NotebookPen },
   { href: "/more", label: "More", icon: Menu },
 ];
-const RAIL = [...TABS.slice(0, 4), { href: "/journal", label: "Journal", icon: NotebookPen }, { href: "/risk", label: "Risk sizing", icon: Calculator },
+const RAIL = [...TABS.slice(0, 4), { href: "/journal", label: "Journal", icon: NotebookPen }, { href: "/tokens", label: "Token screener", icon: ShieldAlert }, { href: "/risk", label: "Risk sizing", icon: Calculator },
   { href: "/methodology", label: "Methodology", icon: BookOpen }, { href: "/settings", label: "Settings", icon: Settings }];
 const on = (path: string, href: string) => (href === "/" ? path === "/" : path.startsWith(href));
 
@@ -20,7 +20,7 @@ export function BottomTabs() {
   const path = usePathname();
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t hairline bg-ink-950/90 backdrop-blur md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
-      <ul className="grid grid-cols-5">
+      <ul className="grid grid-cols-6">
         {TABS.map(({ href, label, icon: Icon }) => (
           <li key={href}>
             <Link href={href} className={cn("focus-ring flex flex-col items-center gap-0.5 py-2 text-[10px]", on(path, href) ? "text-edge" : "text-slate-400")}>

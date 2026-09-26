@@ -1,6 +1,6 @@
 {
   "name": "pitchedge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -15,6 +15,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "ingest": "node --env-file=.env --conditions=react-server --import tsx scripts/ingest.ts",
     "selfcheck": "node --env-file=.env --conditions=react-server --import tsx scripts/selfcheck.ts",
+    "screen": "node --env-file=.env --conditions=react-server --import tsx scripts/screen.ts",
     "summary": "node --env-file=.env --conditions=react-server --import tsx scripts/summary.ts"
   },
   "dependencies": {

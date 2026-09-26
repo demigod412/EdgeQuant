@@ -18,6 +18,7 @@ Same shape as PitchEdge and EdgeArena: Next.js + Postgres, one process per job, 
 | **Journal** | Your own trades, and what it costs you when you break your plan |
 | **Risk sizing** | Account size, risk per trade, quarter-Kelly, exposure and correlation caps |
 | **Portfolio** | Ranked universe, volatility-targeted weights, risk state and funding carry |
+| **Token screener** | What can be checked on a Solana token before you buy: authorities, liquidity, distribution, and whether it can actually be sold |
 | **Methodology** | Every formula, in the open |
 
 **Entry styles and management rules** are chosen per setup and compared on the Backtest page: 3 entry styles
@@ -26,6 +27,25 @@ Set the winner on a setup with `entryStyle` and `manageMode`.
 
 **Telegram alerts:** create a bot with @BotFather, get your chat id from @userinfobot, paste both into Settings.
 You then get the full order ticket when a call is made, the R result when it closes, and a daily summary.
+
+**Token screener — what it is and is not.** It grades *avoidable risk*: supply that can still be inflated,
+accounts that can be frozen, liquidity that can be withdrawn, a transfer hook or fee that taxes or blocks your
+exit, a float already held by the opening-block cluster, and a live sell quote to separate a honeypot from a
+token that merely looks fine. Those are properties of the contract and the distribution, readable now.
+
+It deliberately does **not** output a "probability this pumps". Everywhere else in this app a probability is
+earned — triple-barrier labels, a walk-forward split, calibration on held-out data, and no call unless expected
+R is positive. A brand-new token has no price history and no comparable population at the moment you would have
+to act, so there is nothing to fit, and any such number would have no derivation behind it.
+
+What the screener does instead is keep score. Every screen is recorded append-only, judged again after
+`SCREEN_SETTLE_HOURS` (default 24) — was there still liquidity, did a sale still quote — and the Token screener
+page shows the realised survival rate of each grade. A calibrated survival probability is fitted once 200 screens
+have settled, and is absent until then, the same way the signal models run as identity until 50 settled calls.
+
+A check that could not run counts as **unknown**, never as a pass. A screen missing its critical checks grades
+"unproven", which is not the same as safe. Clearing every check is not a reason to buy: it means only that the
+ways of losing which can be checked have been checked.
 
 **How a call works:** at each closed bar, entry = close, stop = ±1 ATR, target = ±1.5 ATR (per setup). Whichever
 barrier the following bars touch first decides the outcome; a bar touching both counts as a loss. R is measured
@@ -68,7 +88,11 @@ cd /var/www/edgequant && sudo -u ubuntu npm run backtest
 cd /var/www/edgequant && sudo -u ubuntu npm run ingest      # candles → refit → new calls → settle resolved ones
 cd /var/www/edgequant && sudo -u ubuntu npm run backtest    # walk-forward per setup, stored for the Backtest page
 cd /var/www/edgequant && sudo -u ubuntu npm run sourcecheck # are the price feeds reachable?
-cd /var/www/edgequant && sudo -u ubuntu npm run selfcheck   # ledger invariants (add -- --demo for an end-to-end run)
+cd /var/www/edgequant && sudo -u ubuntu npm run selfcheck    # ledger invariants (add -- --demo for an end-to-end run)
+
+# Token screener: screen a Solana mint, or judge the screens past their horizon
+cd /var/www/edgequant && sudo -u ubuntu npm run screen -- <mint>
+cd /var/www/edgequant && sudo -u ubuntu npm run screen -- --settle
 sudo journalctl -u edgequant -f                             # app log
 tail -f /var/log/edgequant-cron.log                         # scheduled jobs
 ```
