@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.5.0 — it looked like the wrong app, and every page was empty
+
+Three complaints, and all of them traced back to the same thing: EdgeQuant was scaffolded from PitchEdge
+and inherited files that were never adapted. None of this was visible from the code that had been
+written for EdgeQuant; it was in the parts nobody had looked at since the copy.
+
+**A crypto mark of its own.** The four PNGs in `public/icons` were byte-for-byte PitchEdge's, so an
+installed EdgeQuant showed the football icon on the home screen. There is now a block outline with a
+rising candle sequence in it, drawn in the app's own palette, with `public/icons/icon.svg` as the source
+of truth and `npm run icons` to rasterise it. The manifest went with it: it described "calibrated
+football probabilities", filed itself under `sports`, and offered shortcuts to `/scanner/safe` and
+"Today" — neither of which is a route in this app.
+
+**Fix: no instruments, so no anything.** `prisma/seed.ts` was referenced by `package.json` and by the
+installer but had never been written, so `npm run db:seed` failed and a fresh install had no Instrument
+rows. Everything in this app hangs off those rows — with nothing to track there is nothing to sync, so
+no candles, so no setups to fit, so no calls, so nothing on Signals, Portfolio, Backtest or Record, and
+an empty instrument list in Settings. The FX pairs in particular are now seeded whether or not a Twelve
+Data key exists, because Settings needs something to point a key at. The seed also runs on `update`, so
+an install that predates it is repaired rather than left as it was.
+
+**Fix: the installer was still PitchEdge's.** It asked for an API-Sports key, wrote `API_SPORTS_KEY` and
+`PREDICTION_LOCK_MINUTES` into `.env`, and asked for neither of the keys this app actually uses — which
+is why the Helius URL had to be added by hand. Worse, the first data sync was gated on that API-Sports
+key being non-empty, so on EdgeQuant it never fired and a new install sat with no prices until the first
+cron run. It now asks for a Twelve Data key and a Solana RPC URL, writes those, and always starts the
+first sync: crypto needs no key at all.
+
+**New: `npm run diagnose`.** Every page here is downstream of the one before it, so an empty page is
+almost never a broken page — it is the first missing link. This walks the chain in order (instruments →
+candles → fitted setups → calls → screens), names where it stops, and prints the command that fills it.
+It also pings each price source *from the server*, because Binance answers some cloud IP ranges with
+HTTP 451 and that would otherwise read as an app fault.
+
+**Fix: the service worker cached routes that do not exist.** Its matcher listed `/fixtures`, `/match`,
+`/league`, `/scanner` and `/top`, so none of EdgeQuant's pages were ever cached, and its offline
+fallback pointed at `/~offline`, which had never been created — the one moment it had a job to do. Both
+fixed, and the network timeout went from 3s to 8s: these pages query the database on every request, and
+3 seconds was short enough to serve a stale page in place of the live one. On a trading tool that is
+worse than waiting, so cached pages now expire in a day rather than three.
+
+Also: the local dev database in `docker-compose.yml` was named `pitchedge` and did not match the
+`DATABASE_URL` in `.env.example`, so `npm run db:up` needed hand-editing before it was any use.
+
 ## 0.4.3 — the second live screen: an honest reason for every check that could not run
 
 - **Fix: the sell simulation asked for a circular quote.** The round trip always went through USDC, so

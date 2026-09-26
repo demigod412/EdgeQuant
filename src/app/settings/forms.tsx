@@ -44,18 +44,39 @@ export function SettingsForm({ cryptoSource, secrets, instruments, telegramChatI
       </fieldset>
       <fieldset>
         <legend className="mb-1 text-xs text-slate-400">Instruments to track</legend>
-        {byMarket.map((m) => (
-          <div key={m} className="mb-2">
-            <div className="text-[11px] uppercase tracking-wide text-slate-500">{m === "CRYPTO" ? "Crypto" : "Forex"}</div>
-            <div className="flex flex-wrap gap-3 text-sm">
-              {instruments.filter((i) => i.market === m).map((i) => (
-                <label key={i.id} className="flex items-center gap-1.5">
-                  <input type="checkbox" name="instrument" value={i.id} defaultChecked={i.enabled} className="accent-edge" />{i.display}
-                </label>
-              ))}
+        {/*
+          An empty list here is not "no pairs available" — the pairs are compiled into the app. It means
+          nothing has been written to the database yet, which also empties every other page, so say so
+          with the command that fixes it rather than showing four blank rows.
+        */}
+        {instruments.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            No instruments in the database yet, which is why the rest of the app is empty too: with
+            nothing to track there is nothing to sync, fit or price. Seed them on the server with{" "}
+            <code className="num rounded bg-black/40 px-1 text-ice">npm run db:seed</code>, then{" "}
+            <code className="num rounded bg-black/40 px-1 text-ice">npm run diagnose</code> to see what
+            is still missing.
+          </p>
+        ) : byMarket.map((m) => {
+          const rows = instruments.filter((i) => i.market === m);
+          return (
+            <div key={m} className="mb-2">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">{m === "CRYPTO" ? "Crypto" : "Forex"}</div>
+              <div className="flex flex-wrap gap-3 text-sm">
+                {rows.length === 0
+                  ? <span className="text-xs text-slate-500">none seeded — run <code className="num">npm run db:seed</code></span>
+                  : rows.map((i) => (
+                    <label key={i.id} className="flex items-center gap-1.5">
+                      <input type="checkbox" name="instrument" value={i.id} defaultChecked={i.enabled} className="accent-edge" />{i.display}
+                    </label>
+                  ))}
+              </div>
+              {m === "FX" && rows.length > 0 && secrets.TWELVE_DATA_KEY === "none" && (
+                <p className="mt-1 text-[11px] text-amber">These are listed but cannot sync until a Twelve Data key is saved above.</p>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </fieldset>
       <div className="flex flex-wrap items-center gap-2">
         <button className={btn} disabled={pending}>{pending ? "Saving…" : "Save"}</button>

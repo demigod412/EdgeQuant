@@ -1,6 +1,6 @@
 {
   "name": "edgequant",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -12,11 +12,13 @@
     "db:up": "docker compose up -d db",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "node --env-file=.env --conditions=react-server --import tsx prisma/seed.ts",
     "ingest": "node --env-file=.env --conditions=react-server --import tsx scripts/ingest.ts",
     "selfcheck": "node --env-file=.env --conditions=react-server --import tsx scripts/selfcheck.ts",
     "screen": "node --env-file=.env --conditions=react-server --import tsx scripts/screen.ts",
-    "summary": "node --env-file=.env --conditions=react-server --import tsx scripts/summary.ts"
+    "summary": "node --env-file=.env --conditions=react-server --import tsx scripts/summary.ts",
+    "icons": "node scripts/icons.mjs",
+    "diagnose": "node --env-file=.env --conditions=react-server --import tsx scripts/diagnose.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
