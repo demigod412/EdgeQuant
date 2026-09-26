@@ -7,3 +7,5 @@ public/sw.js.map
 public/swe-worker-*.js
 *.tsbuildinfo
 next-env.d.ts
+# Prisma client: generated to a custom output dir, and `npm run build` regenerates it.
+src/generated
