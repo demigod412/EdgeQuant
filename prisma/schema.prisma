@@ -1,0 +1,247 @@
+// EdgeQuant — a measurement-first trading lab: locked probability calls, honest settlement, walk-forward backtests.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Market {
+  CRYPTO
+  FX
+}
+
+enum Venue {
+  BINANCE
+  BYBIT
+  TWELVE_DATA
+  DEMO
+}
+
+enum SignalState {
+  OPEN // locked, outcome not yet known
+  WON // target hit first
+  LOST // stop hit first
+  TIMEOUT // neither barrier hit inside the horizon
+  VOID // data gap: not scored
+}
+
+enum Side {
+  LONG
+  SHORT
+}
+
+model Instrument {
+  id         String   @id @default(cuid())
+  market     Market
+  venue      Venue
+  symbol     String // BTCUSDT, EUR/USD
+  display    String
+  tickSize   Float    @default(0.01)
+  feeBps     Float    @default(6) // round-trip cost in basis points (fees + typical spread)
+  slipBps    Float    @default(2) // assumed slippage each way
+  enabled    Boolean  @default(true)
+  lastSyncAt DateTime?
+  candles    Candle[]
+  signals    Signal[]
+  trades     Trade[]
+  funding    FundingRate[]
+  createdAt  DateTime @default(now())
+
+  @@unique([venue, symbol])
+}
+
+/// OHLCV, one row per closed bar. Only closed bars are stored: a live bar can repaint.
+model Candle {
+  id           String     @id @default(cuid())
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  timeframe    String // 1h, 4h, 1d
+  openTime     DateTime
+  open         Float
+  high         Float
+  low          Float
+  close        Float
+  volume       Float      @default(0)
+
+  @@unique([instrumentId, timeframe, openTime])
+  @@index([instrumentId, timeframe, openTime])
+}
+
+/// A setup is one rule + one horizon + one barrier pair. Models are fitted per setup, never across setups.
+model Setup {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String
+  timeframe   String   @default("4h")
+  side        Side     @default(LONG)
+  atrTarget   Float    @default(1.5) // target distance in ATR
+  entryStyle  String   @default("market") // market | limit | stop
+  manageMode  String   @default("plain")  // plain | breakeven | partial | trail
+  atrStop     Float    @default(1) // stop distance in ATR
+  horizonBars Int      @default(12) // time barrier
+  enabled     Boolean  @default(true)
+  autoDisabledAt DateTime?
+  reviewNote  String?
+  signals     Signal[]
+  models      ModelFit[]
+  runs        BacktestRun[]
+  createdAt   DateTime @default(now())
+}
+
+/// A locked call: made at a bar close, never edited, settled later from the candles that followed.
+model Signal {
+  id           String      @id @default(cuid())
+  instrumentId String
+  instrument   Instrument  @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  setupId      String
+  setup        Setup       @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  barTime      DateTime // the bar close this call was made on
+  lockedAt     DateTime    @default(now())
+  entry        Float // the price to trade at (market close, or the limit/stop order price)
+  stop         Float
+  target       Float
+  entryStyle   String      @default("market")
+  manageMode   String      @default("plain")
+  rr           Float       @default(1.5)
+  atr          Float
+  rawP         Float // model probability of hitting target first
+  calP         Float // after calibration
+  edge         Float // p × payoff − (1 − p), after costs, in R
+  riskR        Float       @default(1)
+  features     Json
+  modelVersion String
+  state        SignalState @default(OPEN)
+  exitPrice    Float?
+  exitTime     DateTime?
+  rMultiple    Float? // realised, after costs
+  settledAt    DateTime?
+  alertedAt    DateTime?
+  exitAlertedAt DateTime?
+  note         String?
+
+  @@unique([instrumentId, setupId, barTime])
+  @@index([state, barTime])
+  @@index([setupId, barTime])
+}
+
+/// Walk-forward fit: coefficients plus the calibration map, with the window they were fitted on.
+model ModelFit {
+  id           String   @id @default(cuid())
+  setupId      String
+  setup        Setup    @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  modelVersion String
+  coefficients Json
+  calibration  Json
+  n            Int
+  fittedTo     DateTime // last bar used: everything after this is out of sample
+  brier        Float
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([setupId, active])
+}
+
+/// A stored walk-forward backtest, so results can be compared over time instead of re-run from memory.
+model BacktestRun {
+  id        String   @id @default(cuid())
+  setupId   String
+  setup     Setup    @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  label     String
+  from      DateTime
+  to        DateTime
+  trades    Int
+  hitRate   Float
+  avgPredP  Float
+  expectR   Float // expectancy per trade in R, after costs
+  totalR    Float
+  maxDdR    Float
+  brier     Float
+  baseline  Json // random-walk and buy-and-hold comparisons
+  costsBps  Float
+  detail    Json
+  entryStyle String  @default("market")
+  manageMode String  @default("plain")
+  createdAt DateTime @default(now())
+
+  @@index([setupId, createdAt])
+}
+
+/// Your own trades. Logged by hand, compared with the plan: the discipline half of the app.
+model Trade {
+  id           String     @id @default(cuid())
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  signalId     String?
+  side         Side
+  openedAt     DateTime
+  closedAt     DateTime?
+  entry        Float
+  stop         Float
+  target       Float?
+  exit         Float?
+  sizeUnits    Float
+  riskAmount   Float
+  rMultiple    Float?
+  followedPlan Boolean    @default(true)
+  reason       String?
+  mistakes     String?
+  createdAt    DateTime   @default(now())
+
+  @@index([openedAt])
+}
+
+model RiskProfile {
+  id            String   @id @default("default")
+  accountSize   Float    @default(1000)
+  riskPctPerTrade Float  @default(1)
+  kellyFraction Float    @default(0.25)
+  maxOpenRisk   Float    @default(3) // total % of account at risk at once
+  maxPerMarket  Int      @default(3) // correlated positions cap
+  updatedAt     DateTime @updatedAt
+}
+
+/// Perpetual funding: a mechanical cash flow, not a forecast. Positive funding means longs pay shorts.
+model FundingRate {
+  id           String     @id @default(cuid())
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  fundedAt     DateTime
+  rate         Float // per interval, e.g. 0.0001 = 1 bp per 8h
+  intervalHours Int       @default(8)
+  createdAt    DateTime   @default(now())
+
+  @@unique([instrumentId, fundedAt])
+  @@index([instrumentId, fundedAt])
+}
+
+/// A dated snapshot of the ranked universe and the weights it implies.
+model PortfolioSnapshot {
+  id        String   @id @default(cuid())
+  takenAt   DateTime @default(now())
+  targetVol Float
+  rows      Json // [{id, display, market, score, vol, rank, slot, weight, riskPct}]
+  note      String?
+
+  @@index([takenAt])
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  secret    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+model SyncLog {
+  id         String   @id @default(cuid())
+  job        String
+  ok         Boolean
+  message    String
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+}
