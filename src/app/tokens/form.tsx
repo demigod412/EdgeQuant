@@ -23,8 +23,10 @@ export function ScreenForm() {
       </div>
       {s && <p role="status" className={cn("text-xs", s.ok ? "text-edge" : "text-miss")}>{s.message}</p>}
       <p className="text-[11px] leading-relaxed text-slate-500">
-        Reads the mint account, the pools and a live sell quote. Takes a few seconds. The result is
-        recorded and judged again after the horizon, whatever it said today.
+        Reads the mint account, the pools and a live sell quote. Takes a few seconds — the verdict is
+        complete when it finishes, and you never wait to act on it. The result is also re-checked later,
+        at one hour, six hours and a day, so the screener&rsquo;s own record can be judged against what
+        actually happened.
       </p>
       <p className="text-[11px] leading-relaxed text-slate-500">
         The mint address is Solana&rsquo;s equivalent of a contract address: base58, 32–44 characters, no{" "}

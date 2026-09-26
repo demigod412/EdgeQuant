@@ -10,7 +10,13 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const job = new URL(req.url).searchParams.get("job");
-  if (job === "settle") return NextResponse.json({ ok: true, ...(await settleSignals(prisma)) });
+  if (job === "settle") {
+    // Token screens settle here too. They used to settle nowhere: settleScreens was reachable only by
+    // running `npm run screen -- --settle` by hand, so the 24-hour horizon never arrived on its own and
+    // the screener's record — the only evidence it is worth anything — stayed permanently empty.
+    const { settleScreens } = await import("@/lib/token/ledger");
+    return NextResponse.json({ ok: true, ...(await settleSignals(prisma)), screens: await settleScreens(prisma).catch((e) => ({ error: (e as Error).message })) });
+  }
   if (job === "portfolio") {
     const { rebuildPortfolio, reviewSetups, syncFunding } = await import("@/lib/pipeline/portfolio");
     return NextResponse.json({ ok: true, review: await reviewSetups(prisma), funding: await syncFunding(prisma), portfolio: await rebuildPortfolio(prisma) });
@@ -27,5 +33,7 @@ export async function GET(req: Request) {
       rToday: today.reduce((s, x) => s + (x.rMultiple ?? 0), 0), expectancy: all.length ? all.reduce((s, x) => s + (x.rMultiple ?? 0), 0) / all.length : 0, total: all.length }));
     return NextResponse.json({ ok: res.ok, message: res.message });
   }
-  return NextResponse.json({ ok: true, candles: await ingestCandles(prisma), signals: await generateSignals(prisma), settled: await settleSignals(prisma) });
+  const { settleScreens } = await import("@/lib/token/ledger");
+  return NextResponse.json({ ok: true, candles: await ingestCandles(prisma), signals: await generateSignals(prisma),
+    settled: await settleSignals(prisma), screens: await settleScreens(prisma).catch((e) => ({ error: (e as Error).message })) });
 }

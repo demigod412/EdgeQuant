@@ -4,6 +4,8 @@ import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/to
 import { sellProbe } from "@/lib/token/probe";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
+import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
+import { MAX_HOLD_HOURS } from "@/lib/instruments";
 import type { TokenSnapshot } from "@/lib/token/types";
 
 /** A token with nothing wrong with it, as a baseline to break one thing at a time. */
@@ -321,5 +323,26 @@ describe("PumpSwap LP mint derivation", () => {
     expect(isPumpSwap("PumpSwap")).toBe(true);
     expect(isPumpSwap("raydium")).toBe(false);
     expect(isPumpSwap("pumpfun")).toBe(false); // the bonding curve, handled separately
+  });
+});
+
+describe("settlement horizons", () => {
+  it("keeps every checkpoint strictly inside the final horizon", () => {
+    // A checkpoint at or past the final horizon would be recorded twice and mean nothing.
+    for (const h of CHECKPOINT_HOURS) {
+      expect(h).toBeGreaterThan(0);
+      expect(h).toBeLessThan(SETTLE_HOURS);
+    }
+  });
+
+  it("checks inside the longest hold the app allows", () => {
+    // Six hours is the ceiling on a position, so survival has to be measured at or before it —
+    // otherwise the only recorded ground truth is about a day the trade was never open for.
+    expect(Math.min(...CHECKPOINT_HOURS)).toBeLessThanOrEqual(MAX_HOLD_HOURS);
+    expect(CHECKPOINT_HOURS.some((h) => h <= MAX_HOLD_HOURS)).toBe(true);
+  });
+
+  it("orders the checkpoints", () => {
+    expect([...CHECKPOINT_HOURS].sort((a, b) => a - b)).toEqual(CHECKPOINT_HOURS);
   });
 });

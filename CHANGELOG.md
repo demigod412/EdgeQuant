@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.1 — the 24-hour wait was never going to end
+
+- **Fix: nothing scheduled ever settled a token screen.** `settleScreens` was reachable only by running
+  `npm run screen -- --settle` by hand — the cron `settle` job settled trading signals and left screens
+  alone. So the horizon never arrived on its own, the screener's record would have stayed empty
+  permanently, and the survival model it is meant to earn could never have been fitted. It now runs in
+  the cron `settle` job, in the default cron job, and in `npm run ingest`.
+- **Checkpoints at 1h and 6h, not only 24h.** Twenty-four hours answers "did this rug", which is the
+  right question for the screener's record and the wrong one for a position held for two hours: a token
+  can survive the day and still have been unsellable at the moment you wanted out. Since nothing in this
+  app is now held longer than `MAX_HOLD_HOURS`, survival is recorded at one and six hours as well. Those
+  land within the hour, which matters a great deal when the record needs hundreds of screens before it
+  can say anything. Tests assert every checkpoint falls inside the final horizon and at least one inside
+  the longest permitted hold.
+- **Said plainly in the UI that the verdict is immediate.** The screen result is complete the moment it
+  finishes; the horizon is about grading the screener, not about whether you may act on a result. That
+  was never stated, and "settles after 24h" on the form read as though it were a waiting period.
+
 ## 0.6.0 — day trading, and an empty board that explains itself
 
 ### PumpSwap LP locks are now measured, not waved through

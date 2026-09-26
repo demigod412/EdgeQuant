@@ -275,6 +275,9 @@ model TokenScreen {
   liqAtSettle Float?
   /// Why it failed, when it did: rug | honeypot | drained | unknown
   failureKind String?
+  /// Interim checks before the final horizon: [{ hours, at, survived, liquidityUsd, failureKind }].
+  /// A six-hour hold is judged by what was true at six hours, not by what was true a day later.
+  checkpoints Json     @default("[]")
 
   @@index([mint, screenedAt])
   @@index([screenedAt])

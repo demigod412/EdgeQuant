@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { fmtWat } from "@/lib/time";
-import { parseChecks, screenRecord, SETTLE_HOURS } from "@/lib/token/ledger";
+import { CHECKPOINT_HOURS, parseChecks, screenRecord, SETTLE_HOURS, type Checkpoint } from "@/lib/token/ledger";
 import { SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { CopyButton } from "@/components/CopyButton";
 import { EmptyState } from "@/components/EmptyState";
@@ -48,12 +48,28 @@ export default async function Tokens() {
 
       <Card>
         <SectionTitle aside={record.n ? `${record.n} settled` : "nothing settled yet"}>Does the screener work?</SectionTitle>
+        {record.checkpoints.length > 0 && (
+          <div className="mb-3">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500">Still tradeable at each checkpoint</p>
+            <p className="num mt-1 text-sm text-slate-200">
+              {record.checkpoints.map((c) => (
+                <span key={c.hours} className="mr-4">{c.hours}h <span className={c.survivalRate >= 0.9 ? "text-edge" : "text-amber"}>{pct(c.survivalRate)}</span> <span className="text-[11px] text-slate-500">of {c.n}</span></span>
+              ))}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-500">
+              These land within the hour rather than after a day, and they are the horizons you actually
+              trade. Waiting for the {SETTLE_HOURS}-hour figure before learning anything would throw away
+              the only timely signal there is.
+            </p>
+          </div>
+        )}
         {record.n === 0 ? (
           <p className="text-sm text-slate-400">
-            No screen has reached its {SETTLE_HOURS}-hour horizon yet. Until they do, the grades are
-            reasoned judgements with nothing behind them — this panel is where they earn or lose their
-            keep, by showing the realised survival rate of each grade. A calibrated survival probability
-            appears once {SURVIVAL_MIN_SETTLED} screens have settled, not before.
+            No screen has reached its {SETTLE_HOURS}-hour horizon yet — that horizon judges whether a token
+            <em> rugged</em>, and it is about grading the screener, not about whether you may act on a
+            result. The verdict above each screen was complete the moment it ran. Interim checks at{" "}
+            {CHECKPOINT_HOURS.join("h and ")}h arrive far sooner. A calibrated survival probability appears
+            once {SURVIVAL_MIN_SETTLED} screens have settled, not before.
           </p>
         ) : (
           <>
@@ -107,6 +123,9 @@ export default async function Tokens() {
                     <p className="num text-[11px] text-slate-500">
                       {fmtWat(s.screenedAt, "d MMM HH:mm")}
                       {s.liquidityUsd != null && <> · liquidity ${Math.round(s.liquidityUsd).toLocaleString("en-US")}</>}
+                      {(Array.isArray(s.checkpoints) ? (s.checkpoints as unknown as Checkpoint[]) : []).map((c) => (
+                        <span key={c.hours}> · {c.hours}h {c.survived ? <span className="text-edge">ok</span> : <span className="text-miss">{c.failureKind}</span>}</span>
+                      ))}
                       {s.settledAt && <> · {s.survived ? <span className="text-edge">still tradeable at {SETTLE_HOURS}h</span> : <span className="text-miss">failed: {s.failureKind}</span>}</>}
                     </p>
                   </div>
