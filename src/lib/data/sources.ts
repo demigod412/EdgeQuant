@@ -85,5 +85,18 @@ export const twelveData = (key: string, base = process.env.TWELVE_DATA_BASE_URL 
     if (r.status === "error") throw new Error(r.message ?? "Twelve Data error");
     return parseTwelveData(r.values ?? [], tf);
   },
-  async test() { try { const b = await this.candles("EUR/USD", "1h", 5); return { ok: b.length > 0, message: `Twelve Data: ${b.length} bars` }; } catch (e) { return { ok: false, message: `Twelve Data: ${(e as Error).message}` }; } },
+  /*
+   * 4h, not 1h: the app ingests 4h and 1d, and testing a timeframe it never uses reported FAILED on a
+   * source that was about to pull 996 bars per pair without trouble. An empty answer on a weekend is
+   * also not a failure — the FX market is shut — so say that rather than implying the key is bad.
+   */
+  async test() {
+    try {
+      const b = await this.candles("EUR/USD", "4h", 5);
+      const weekend = [0, 6].includes(new Date().getUTCDay());
+      return b.length > 0
+        ? { ok: true, message: `Twelve Data: ${b.length} bars, last close ${b.at(-1)?.close}` }
+        : { ok: false, message: `Twelve Data: no bars returned${weekend ? " — the FX market is closed this weekend, which is expected" : ""}` };
+    } catch (e) { return { ok: false, message: `Twelve Data: ${(e as Error).message}` }; }
+  },
 });

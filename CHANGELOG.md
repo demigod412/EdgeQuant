@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.5 — "made 0, skipped 40" now says why
+
+- **Skip reasons, and the best edge anything came close with.** No open calls is the normal state most of
+  the time, but a bare count gave no way to tell a working pipeline waiting for a setup from a broken
+  one. `generateSignals` now returns a `why` breakdown — rule not met, edge below the floor, not enough
+  history, no fitted model, already called on this bar — plus `bestEdge`, the closest any candidate came.
+  An edge of -0.4R means nothing was remotely tradeable; -0.01R against a 0.02R floor means the next bar
+  could fire. Three of those paths were not previously counted at all, so they were missing from both
+  `made` and `skipped`.
+- **Fix: the FX source test reported FAILED on a working key.** It fetched a `1h` bar, a timeframe the app
+  never ingests, and on a weekend with the FX market shut that came back empty — printing
+  `Twelve Data FAILED — 0 bars` thirty seconds before the real sync pulled 996 bars per pair. It tests
+  on 4h now, and an empty weekend answer says the market is closed rather than implying a bad key.
+
 ## 0.5.4 — "That is not a Solana mint address" was not enough to act on
 
 - **Named reasons instead of one blanket refusal.** The form checked base58 and 32–44 characters and, on

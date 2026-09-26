@@ -51,27 +51,39 @@ export async function generateSignals(db: PrismaClient, opts: { minEdgeR?: numbe
   const setups = await db.setup.findMany({ where: { enabled: true } });
   const instruments = await db.instrument.findMany({ where: { enabled: true } });
   let made = 0, skipped = 0;
+  /*
+   * Why each candidate was passed over, and the best edge anyone came close with.
+   *
+   * "made 0, skipped 40" is true but unusable: no calls is the normal state most of the time, and
+   * without a reason there is no way to tell a working pipeline waiting for a setup from a broken one.
+   * Three of the paths below did not even reach the counter, so they vanished from both numbers.
+   */
+  const why: Record<string, number> = {};
+  const skip = (reason: string) => { why[reason] = (why[reason] ?? 0) + 1; skipped++; };
+  let bestEdge: { instrument: string; setup: string; edge: number } | null = null;
+
   for (const setup of setups) {
     const model = await activeFit(db, setup.id);
-    if (!model) continue;
+    if (!model) { skip("no fitted model"); continue; }
     for (const inst of instruments) {
       const bars = await barsOf(db, inst.id, setup.timeframe, 400);
-      if (bars.length < 150) continue;
+      if (bars.length < 150) { skip(`not enough ${setup.timeframe} history`); continue; }
       const rule = ENTRY_RULES[setup.key];
-      if (rule && !rule(bars)) { skipped++; continue; }
+      if (rule && !rule(bars)) { skip("setup rule not met on the latest bar"); continue; }
       const x = featuresAt(bars);
       const a = atr(bars, 14);
-      if (!x || !(a > 0)) continue;
+      if (!x || !(a > 0)) { skip("features or ATR unavailable"); continue; }
       const last = bars[bars.length - 1];
       const cfg = { ...DEFAULT_PLAN, entry: setup.entryStyle as EntryStyle, manage: setup.manageMode as ManageMode };
       const plan = orderPlan(setup.side, last.close, a, setup.atrStop, setup.atrTarget, cfg);
       const entry = plan.orderPrice, stop = plan.stop, target = plan.target;
       const rawP = predictLogit(model.fit, x), calP = applyCalibration(model.cal, rawP);
       const edge = expectedR(calP, plan.rr, entry, stop, totalBps(inst));
-      if (edge < minEdge) { skipped++; continue; }
+      if (!bestEdge || edge > bestEdge.edge) bestEdge = { instrument: inst.display, setup: setup.key, edge };
+      if (edge < minEdge) { skip(`edge below the ${minEdge}R floor`); continue; }
       const barTime = new Date(last.openTime);
       const exists = await db.signal.findUnique({ where: { instrumentId_setupId_barTime: { instrumentId: inst.id, setupId: setup.id, barTime } } });
-      if (exists) continue;
+      if (exists) { skip("already called on this bar"); continue; }
       const created = await db.signal.create({ data: { instrumentId: inst.id, setupId: setup.id, barTime, entry, stop, target, atr: a, rawP, calP, edge,
         entryStyle: cfg.entry, manageMode: cfg.manage, rr: plan.rr,
         features: Object.fromEntries(x.map((v, i) => [`f${i}`, v])), modelVersion: MODEL_VERSION } });
@@ -87,7 +99,9 @@ export async function generateSignals(db: PrismaClient, opts: { minEdgeR?: numbe
       if (sent.ok) await db.signal.update({ where: { id: created.id }, data: { alertedAt: new Date() } });
     }
   }
-  return { made, skipped };
+  // bestEdge is the honest measure of how close anything came: an edge of -0.4R means nothing was
+  // remotely tradeable, while -0.01R against a 0.02R floor means the next bar could well fire.
+  return { made, skipped, why, bestEdge: bestEdge ? { ...bestEdge, edge: Number(bestEdge.edge.toFixed(3)) } : null };
 }
 
 /** Settle open calls from the bars that followed. Never edits a call: it fills in the outcome once, from data. */
