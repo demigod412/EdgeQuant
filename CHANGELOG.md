@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.4 — "That is not a Solana mint address" was not enough to act on
+
+- **Named reasons instead of one blanket refusal.** The form checked base58 and 32–44 characters and, on
+  failure, said only that the input was not a mint address — leaving you to work out which ordinary
+  mistake you had made. It now says: this is an Ethereum or BSC address and the screener is Solana-only;
+  this address is abbreviated in the middle, so use the copy button; this is 12 characters where 32 to 44
+  are needed. `src/lib/token/mintInput.ts`, with tests for each case.
+- **A pasted link works.** pump.fun, Birdeye, Solscan and Jupiter all carry the mint in the URL, and
+  pasting the page you were looking at is the obvious thing to do, so the address is extracted from it.
+- **A DexScreener link is refused on purpose.** Its URL names the *pool*, whose address is valid base58
+  and indistinguishable from a token's, so accepting it would have screened the wrong thing and said
+  nothing. It now tells you where the token address is on that page instead.
+- **And if a pool address is pasted directly**, which no format check can catch, the screen now says the
+  address has no mint account and is therefore not a token — rather than reporting no authorities, no
+  supply and no holders as though those were findings about a token.
+
 ## 0.5.3 — pace Twelve Data to the plan it is on
 
 - **Fix: the first FX sync would have looked like a hang.** Requests were spaced 400ms apart for every

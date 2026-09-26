@@ -1,15 +1,16 @@
 "use server";
 import { prisma } from "@/lib/db";
 import { screenToken } from "@/lib/token/ledger";
+import { parseMintInput } from "@/lib/token/mintInput";
 
 export type ScreenState = { ok: boolean; message: string } | null;
 
-/** Base58, 32–44 chars: a Solana mint. Rejected here rather than sent to an RPC as a guess. */
-const MINT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-
 export async function screen(_: ScreenState, fd: FormData): Promise<ScreenState> {
-  const mint = String(fd.get("mint") ?? "").trim();
-  if (!MINT.test(mint)) return { ok: false, message: "That is not a Solana mint address." };
+  // Rejected here rather than sent to an RPC as a guess — but rejected with the reason, since "that is
+  // not a mint address" left you to work out which of several ordinary mistakes you had made.
+  const parsed = parseMintInput(String(fd.get("mint") ?? ""));
+  if (!parsed.ok) return { ok: false, message: parsed.message };
+  const mint = parsed.mint;
   try {
     const { grade, errors } = await screenToken(prisma, mint);
     return { ok: grade.grade !== "avoid", message: `${grade.headline}${errors.length ? ` (${errors.length} source${errors.length === 1 ? "" : "s"} unavailable)` : ""}` };

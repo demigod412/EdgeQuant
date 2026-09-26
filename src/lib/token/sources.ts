@@ -177,6 +177,11 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
   const pairs = await readPairs(mint).catch((e) => { errors.push(`pools: ${(e as Error).message}`); return null; });
   const m = await readMint(mint).catch((e) => { errors.push(`mint account: ${(e as Error).message}`); return null; });
   if (!RPC()) errors.push("no SOLANA_RPC_URL set — authorities and holder distribution could not be read");
+  // Every Solana address is base58 and 32–44 characters, so a pool address passes every check the form
+  // can make. This is where it stops being plausible: a pool is not a mint account, and screening one
+  // by accident — which a copied DexScreener URL invites — would otherwise report a token with no
+  // authorities, no supply and no holders as if that were a finding about the token.
+  else if (!m) errors.push("this address has no mint account, so it is not a token — a DexScreener URL gives you the pool address, not the token's");
   const holders = await readHolders(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`holders: ${(e as Error).message}`); return null; });
   const sell = await simulateSell(mint, m?.decimals ?? null).catch((e) => { errors.push(`sell quote: ${(e as Error).message}`); return { sellQuote: null, sellPriceImpact: null, sellNote: null }; });
   if (sell.sellNote) errors.push(`sell side refused: ${sell.sellNote}`);

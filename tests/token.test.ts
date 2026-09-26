@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { sellProbe } from "@/lib/token/probe";
+import { parseMintInput } from "@/lib/token/mintInput";
 import type { TokenSnapshot } from "@/lib/token/types";
 
 /** A token with nothing wrong with it, as a baseline to break one thing at a time. */
@@ -219,5 +220,35 @@ describe("bugs found on the second live screen", () => {
   it("still falls back to a plain message when no reason was recorded", () => {
     expect(find(clean({ deployerPriorMints: null, deployerPriorRugs: null }), "deployerHistory").detail).toMatch(/not traced/);
     expect(find(clean({ sniperBundleShare: null }), "sniperBundle").detail).toMatch(/not traced/);
+  });
+});
+
+describe("what people actually paste into the screener", () => {
+  const ok = (s: string) => { const r = parseMintInput(s); return r.ok ? r.mint : `REJECTED: ${r.message}`; };
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+  it("takes a bare mint, with or without stray whitespace", () => {
+    expect(ok(USDC)).toBe(USDC);
+    expect(ok(`  ${USDC}\n`)).toBe(USDC);
+  });
+
+  it("pulls the mint out of a pasted link", () => {
+    expect(ok(`https://pump.fun/coin/${USDC}`)).toBe(USDC);
+    expect(ok(`https://solscan.io/token/${USDC}`)).toBe(USDC);
+    expect(ok(`https://birdeye.so/token/${USDC}?chain=solana`)).toBe(USDC);
+  });
+
+  it("refuses a DexScreener link rather than screening the pool it names", () => {
+    // The pool address is valid base58, so accepting it would screen the wrong thing silently.
+    const r = parseMintInput(`https://dexscreener.com/solana/${USDC}`);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toMatch(/pool address/i);
+  });
+
+  it("names the mistake instead of saying only that it is not a mint", () => {
+    expect(ok("0x2170Ed0880ac9A755fd29B2688956BD959F933F8")).toMatch(/Ethereum or BSC/);
+    expect(ok("EPjFW…TDt1v")).toMatch(/abbreviated/);
+    expect(ok("EPjFWdd5Aufq")).toMatch(/12 characters/);
+    expect(ok("")).toMatch(/Paste a Solana mint/);
   });
 });
