@@ -148,10 +148,13 @@ async function creatorOf(mint: string): Promise<string | null> {
  * behind it is telling you what it does.
  */
 export async function deployerHistory(mint: string): Promise<
-  { deployer: string; priorMints: number; priorDead: number; checked: number } | null
+  { deployer: string; priorMints: number; priorDead: number; checked: number } | { unavailable: string }
 > {
+  if (!isHelius()) return { unavailable: "needs a Helius RPC to read the asset's creator" };
   const deployer = await creatorOf(mint);
-  if (!deployer) return null;
+  // Plenty of tokens record no creator at all — an older SPL mint, or one not issued by a launchpad.
+  // That is a fact about the token, not a missing key, and saying so stops the wrong hunt.
+  if (!deployer) return { unavailable: "no creator recorded on this mint, so the deployer is unknown" };
   await sleep(SPACING_MS);
 
   type Page = { items?: { id?: string }[]; total?: number };
@@ -159,8 +162,8 @@ export async function deployerHistory(mint: string): Promise<
     creatorAddress: deployer, onlyVerified: false, page: 1, limit: 1000,
     displayOptions: { showFungible: true },
   });
-  const others = (page?.items ?? []).map((i) => i.id).filter((id): id is string => !!id && id !== mint);
-  if (!page) return null;
+  if (!page) return { unavailable: `creator ${deployer.slice(0, 6)}… found, but its other mints could not be listed` };
+  const others = (page.items ?? []).map((i) => i.id).filter((id): id is string => !!id && id !== mint);
   if (!others.length) return { deployer, priorMints: 0, priorDead: 0, checked: 0 };
 
   // DexScreener takes 30 addresses at a time; one request settles them all.
@@ -197,9 +200,9 @@ export async function deployerHistory(mint: string): Promise<
  * older, busier tokens — reported as unknown rather than computed from a partial history.
  */
 export async function openingBlocks(mint: string, poolAddresses: string[]): Promise<
-  { share: number; wallets: number; slots: number } | null
+  { share: number; wallets: number; slots: number } | { unavailable: string }
 > {
-  if (!RPC()) return null;
+  if (!RPC()) return { unavailable: "no RPC configured" };
   type Sig = { signature: string; slot: number };
   const all: Sig[] = [];
   let before: string | undefined;
@@ -212,15 +215,16 @@ export async function openingBlocks(mint: string, poolAddresses: string[]): Prom
     await sleep(SPACING_MS);
   }
   // `before` still set means there was more history than the cap allowed: we never saw the launch.
-  if (!all.length || before) return null;
+  if (!all.length) return { unavailable: "no transactions found for this mint" };
+  if (before) return { unavailable: `more than ${MAX_SIG_PAGES * 1000} transactions, so the launch is out of reach — expected on an established token` };
 
   const firstSlot = Math.min(...all.map((s) => s.slot));
   const opening = all.filter((s) => s.slot <= firstSlot + OPENING_SLOTS).map((s) => s.signature);
-  if (!opening.length) return null;
+  if (!opening.length) return { unavailable: "no transactions in the opening slots" };
 
   const supplyRes = await rpc<{ value?: { uiAmount: number | null } }>("getTokenSupply", [mint]);
   const supply = supplyRes?.value?.uiAmount ?? 0;
-  if (!supply) return null;
+  if (!supply) return { unavailable: "token supply could not be read" };
 
   const pools = new Set(poolAddresses);
   const takenBy = new Map<string, number>();
@@ -229,7 +233,7 @@ export async function openingBlocks(mint: string, poolAddresses: string[]): Prom
     await sleep(SPACING_MS);
     type Tx = { tokenTransfers?: { mint?: string; toUserAccount?: string; fromUserAccount?: string; tokenAmount?: number }[] };
     const txs = await heliusTransactions(chunk);
-    if (!txs) return null;
+    if (!txs) return { unavailable: "parsed transactions unavailable — needs a Helius key" };
     for (const tx of txs as Tx[]) {
       for (const tr of tx.tokenTransfers ?? []) {
         if (tr.mint !== mint) continue;

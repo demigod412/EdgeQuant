@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.3 — the second live screen: an honest reason for every check that could not run
+
+- **Fix: the sell simulation asked for a circular quote.** The round trip always went through USDC, so
+  screening USDC itself asked Jupiter for USDC → USDC. Jupiter refuses that outright
+  (`CIRCULAR_ARBITRAGE_IS_DISABLED`), and it reached the report as a bare `HTTP 400`. The probe now switches
+  to wrapped SOL when the screened mint is the quote currency. Only the ratio of the two quotes is used, so
+  the currency and its units cancel — which is also why the quote amounts are no longer called `inUsd` /
+  `outUsd`: they are base units of whichever currency was probed, and the old names invited a wrong reading.
+  The choice lives in `src/lib/token/probe.ts` on its own, with tests, because it is the part that was wrong.
+- **Fix: a failed quote said only "HTTP 400".** Jupiter states its refusals in the response body, and
+  discarding it sent the diagnosis in the wrong direction for a full round trip. The body is now part of the
+  error. A sell side that refuses to quote still counts as the honeypot signal it is, but its reason is
+  carried into the report as well, so a routing outage is not silently read as a trap.
+- **Fix: two checks blamed a missing Helius key when the key was working.** "Needs a Helius key" was printed
+  whenever the deployer or the opening blocks could not be established, regardless of why. Both now give the
+  actual reason, and each is a fact about the token rather than a fault in the setup:
+  *no creator recorded on this mint*, *more than N transactions so the launch is out of reach*, *no
+  transactions in the opening slots*, *supply could not be read*. This is the same treatment `lpUnchecked`
+  already had, plumbed through `deployerUnchecked` and `openingUnchecked`.
+
+Both remaining "unknown" results on an established token like USDC are now correctly labelled: it records no
+creator, and its launch is millions of transactions beyond the signature walk. Neither is fixable, and
+neither is a fault — they are limits of screening a token that is not the kind this tool is for.
+
 ## 0.4.2 — four bugs the first live screen exposed
 - **Fix: the sell simulation never ran.** Jupiter's v6 host (`quote-api.jup.ag`) no longer resolves, so every
   screen failed it with a bare "fetch failed" — losing the one check that can tell a honeypot from a token

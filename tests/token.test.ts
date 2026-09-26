@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
+import { sellProbe } from "@/lib/token/probe";
 import type { TokenSnapshot } from "@/lib/token/types";
 
 /** A token with nothing wrong with it, as a baseline to break one thing at a time. */
@@ -12,9 +13,9 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   transferFeeBps: 0, hasTransferHook: false,
   liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpLockedShare: 1, lpTopHolderShare: 0,
   top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200,
-  deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3,
-  sniperBundleShare: 0.02, sniperWallets: 3, openingSlots: 60,
-  sellQuote: { inUsd: 50, outUsd: 48.5 }, sellPriceImpact: 0.01,
+  deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3, deployerUnchecked: null,
+  sniperBundleShare: 0.02, sniperWallets: 3, openingSlots: 60, openingUnchecked: null,
+  sellQuote: { probeIn: 50, probeOut: 48.5 }, sellPriceImpact: 0.01,
   fdvUsd: 900_000, volume24hUsd: 300_000, buys24h: 900, sells24h: 800,
   ...over,
 });
@@ -40,13 +41,13 @@ describe("token checks", () => {
   });
 
   it("catches a honeypot: the buy quotes and the sale does not", () => {
-    const c = find(clean({ sellQuote: { inUsd: 50, outUsd: 0 } }), "sellable");
+    const c = find(clean({ sellQuote: { probeIn: 50, probeOut: 0 } }), "sellable");
     expect(c.verdict).toBe("fail");
     expect(c.detail).toMatch(/honeypot/);
   });
 
   it("catches an exit tax that a mint-account read would miss", () => {
-    expect(find(clean({ sellQuote: { inUsd: 50, outUsd: 40 } }), "sellable").verdict).toBe("fail");
+    expect(find(clean({ sellQuote: { probeIn: 50, probeOut: 40 } }), "sellable").verdict).toBe("fail");
     expect(find(clean({ hasTransferHook: true }), "transferRules").verdict).toBe("fail");
     expect(find(clean({ transferFeeBps: 500 }), "transferRules").verdict).toBe("fail");
     expect(find(clean({ transferFeeBps: 30 }), "transferRules").verdict).toBe("warn");
@@ -178,5 +179,45 @@ describe("survival probability", () => {
     expect(p).not.toBeNull();
     expect(p!).toBeGreaterThan(0);
     expect(p!).toBeLessThan(1);
+  });
+});
+
+describe("bugs found on the second live screen", () => {
+  it("does not ask for a circular quote when the screened token is the probe currency", () => {
+    const usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    // Jupiter refuses input === output outright ("not allowed to be equal"), which surfaced as a bare
+    // HTTP 400 and cost the honeypot check on any token used as a quote currency.
+    expect(sellProbe(usdc).via).not.toBe(usdc);
+    expect(sellProbe("SomeMemeMint111111111111111111111111111111").via).toBe(usdc);
+  });
+
+  it("measures the round trip as a ratio, so the probe currency's units do not matter", () => {
+    const small = find(clean({ sellQuote: { probeIn: 50e6, probeOut: 48.5e6 } }), "sellable");
+    const large = find(clean({ sellQuote: { probeIn: 0.25e9, probeOut: 0.2425e9 } }), "sellable");
+    expect(small.verdict).toBe("pass");
+    expect(large.verdict).toBe("pass");
+  });
+
+  it("gives the real reason a history check could not run, not a blanket 'needs a key'", () => {
+    // The user had a working key; saying otherwise sent the hunt in the wrong direction. These two
+    // checks are unavailable for reasons that are facts about the token, and they should say which.
+    const dep = find(clean({
+      deployerPriorMints: null, deployerPriorRugs: null,
+      deployerUnchecked: "no creator recorded on this mint, so the deployer is unknown",
+    }), "deployerHistory");
+    expect(dep.verdict).toBe("unknown");
+    expect(dep.detail).toContain("no creator recorded");
+
+    const open = find(clean({
+      sniperBundleShare: null,
+      openingUnchecked: "more than 6000 transactions, so the launch is out of reach",
+    }), "sniperBundle");
+    expect(open.verdict).toBe("unknown");
+    expect(open.detail).toContain("out of reach");
+  });
+
+  it("still falls back to a plain message when no reason was recorded", () => {
+    expect(find(clean({ deployerPriorMints: null, deployerPriorRugs: null }), "deployerHistory").detail).toMatch(/not traced/);
+    expect(find(clean({ sniperBundleShare: null }), "sniperBundle").detail).toMatch(/not traced/);
   });
 });

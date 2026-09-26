@@ -44,7 +44,7 @@ export async function settleScreens(db: PrismaClient, now = new Date()) {
       const pairs = await readPairs(s.mint).catch(() => null);
       const liq = pairs?.liquidityUsd ?? 0;
       const sell = await simulateSell(s.mint, null).catch(() => ({ sellQuote: null, sellPriceImpact: null }));
-      const canSell = !!sell.sellQuote && sell.sellQuote.outUsd > sell.sellQuote.inUsd * 0.5;
+      const canSell = !!sell.sellQuote && sell.sellQuote.probeOut > sell.sellQuote.probeIn * 0.5;
       const alive = liq >= 1_000 && canSell;
       const kind = alive ? null : liq < 1_000 ? "rug" : !canSell ? "honeypot" : "drained";
       await db.tokenScreen.update({ where: { id: s.id }, data: { settledAt: new Date(), survived: alive, liqAtSettle: liq, failureKind: kind } });

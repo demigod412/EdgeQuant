@@ -1,4 +1,5 @@
 import "server-only";
+import { SELL_PROBE_USD, sellProbe, USDC } from "./probe";
 import type { TokenSnapshot } from "./types";
 import { deployerHistory, lpLock, openingBlocks } from "./helius";
 
@@ -24,8 +25,6 @@ const DEX = "https://api.dexscreener.com";
  */
 const JUP = process.env.JUPITER_QUOTE_URL ?? "https://lite-api.jup.ag/swap/v1";
 /** Size used for the sell simulation, in USD. Small enough to be realistic, big enough to be honest. */
-export const SELL_PROBE_USD = Number(process.env.SELL_PROBE_USD) || 50;
-const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /** The classic SPL Token program. A mint it owns cannot carry Token-2022 extensions. */
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
@@ -134,22 +133,40 @@ export async function readPairs(mint: string) {
  * Sell simulation: quote USDC → token, then the token amount straight back → USDC. A honeypot happily
  * quotes the buy and cannot quote the sale, which no amount of reading the mint account would reveal.
  */
+/** Jupiter states its refusals in the body; an "HTTP 400" on its own sends you looking in the wrong place. */
+async function quote(url: string) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 12_000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal, cache: "no-store" });
+    const body = await r.text();
+    if (!r.ok) {
+      let why = body.slice(0, 160);
+      try { const j = JSON.parse(body) as { error?: string }; if (j.error) why = j.error; } catch { /* keep the raw body */ }
+      throw new Error(`Jupiter ${r.status}: ${why}`);
+    }
+    return JSON.parse(body) as { outAmount?: string; priceImpactPct?: string | number };
+  } finally { clearTimeout(t); }
+}
+
 export async function simulateSell(mint: string, decimals: number | null) {
-  type Quote = { outAmount?: string; priceImpactPct?: string | number };
-  const inLamports = Math.round(SELL_PROBE_USD * 1e6); // USDC has 6 decimals
-  const buy = await get<Quote>(`${JUP}/quote?inputMint=${USDC}&outputMint=${mint}&amount=${inLamports}&slippageBps=300`);
+  const { via, amount: probe } = sellProbe(mint);
+  const buy = await quote(`${JUP}/quote?inputMint=${via}&outputMint=${mint}&amount=${probe}&slippageBps=300`);
   const tokenOut = Number(buy.outAmount ?? 0);
-  if (!tokenOut) return { sellQuote: null, sellPriceImpact: null };
-  const sell = await get<Quote>(`${JUP}/quote?inputMint=${mint}&outputMint=${USDC}&amount=${Math.floor(tokenOut)}&slippageBps=300`).catch(() => null);
+  if (!tokenOut) return { sellQuote: null, sellPriceImpact: null, sellNote: null };
+  let refused: string | null = null;
+  const sell = await quote(`${JUP}/quote?inputMint=${mint}&outputMint=${via}&amount=${Math.floor(tokenOut)}&slippageBps=300`)
+    .catch((e: Error) => { refused = e.message; return null; });
   if (!sell?.outAmount) {
-    // The buy quotes and the sale does not: the defining shape of a honeypot.
-    return { sellQuote: { inUsd: SELL_PROBE_USD, outUsd: 0 }, sellPriceImpact: null };
+    // The buy quotes and the sale does not: the defining shape of a honeypot. The verdict stands on its
+    // own, but carry the refusal out too, so a routing outage is not read as a trap.
+    return { sellQuote: { probeIn: probe, probeOut: 0 }, sellPriceImpact: null, sellNote: refused };
   }
   const impact = Number(sell.priceImpactPct ?? 0);
   void decimals;
   return {
-    sellQuote: { inUsd: SELL_PROBE_USD, outUsd: Number(sell.outAmount) / 1e6 },
+    sellQuote: { probeIn: probe, probeOut: Number(sell.outAmount) },
     sellPriceImpact: Number.isFinite(impact) ? Math.abs(impact) : null,
+    sellNote: null,
   };
 }
 
@@ -161,15 +178,20 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
   const m = await readMint(mint).catch((e) => { errors.push(`mint account: ${(e as Error).message}`); return null; });
   if (!RPC()) errors.push("no SOLANA_RPC_URL set — authorities and holder distribution could not be read");
   const holders = await readHolders(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`holders: ${(e as Error).message}`); return null; });
-  const sell = await simulateSell(mint, m?.decimals ?? null).catch((e) => { errors.push(`sell quote: ${(e as Error).message}`); return { sellQuote: null, sellPriceImpact: null }; });
+  const sell = await simulateSell(mint, m?.decimals ?? null).catch((e) => { errors.push(`sell quote: ${(e as Error).message}`); return { sellQuote: null, sellPriceImpact: null, sellNote: null }; });
+  if (sell.sellNote) errors.push(`sell side refused: ${sell.sellNote}`);
 
   // The three that need indexed history. Each failure is recorded and leaves its check unknown.
   const lp = await lpLock(pairs?.dexId ?? null, pairs?.deepestPair ?? null)
     .catch((e) => { errors.push(`LP lock: ${(e as Error).message}`); return null; });
-  const dep = await deployerHistory(mint).catch((e) => { errors.push(`deployer history: ${(e as Error).message}`); return null; });
-  const open = await openingBlocks(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`opening slots: ${(e as Error).message}`); return null; });
-  if (!dep) errors.push("deployer not identified — needs a Helius key to read the asset's creator");
-  if (!open) errors.push("opening slots not measured — the launch is older than the signature walk allows, or no Helius key");
+  const dep = await deployerHistory(mint).catch((e) => ({ unavailable: (e as Error).message }));
+  const open = await openingBlocks(mint, pairs?.poolAddresses ?? []).catch((e) => ({ unavailable: (e as Error).message }));
+  const depWhy = dep && "unavailable" in dep ? dep.unavailable : null;
+  const openWhy = open && "unavailable" in open ? open.unavailable : null;
+  if (depWhy) errors.push(`deployer history: ${depWhy}`);
+  if (openWhy) errors.push(`opening slots: ${openWhy}`);
+  const depOk = dep && !("unavailable" in dep) ? dep : null;
+  const openOk = open && !("unavailable" in open) ? open : null;
 
   return {
     errors,
@@ -189,13 +211,15 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
       lpTopHolderShare: lp && "topHolderShare" in lp ? lp.topHolderShare : null,
       top10Share: holders?.top10Share ?? null, topHolderShare: holders?.topHolderShare ?? null,
       holderCount: null,
-      deployer: dep?.deployer ?? null,
-      deployerPriorMints: dep?.priorMints ?? null,
-      deployerPriorRugs: dep?.priorDead ?? null,
-      deployerChecked: dep?.checked ?? null,
-      sniperBundleShare: open?.share ?? null,
-      sniperWallets: open?.wallets ?? null,
-      openingSlots: open?.slots ?? null,
+      deployer: depOk?.deployer ?? null,
+      deployerPriorMints: depOk?.priorMints ?? null,
+      deployerPriorRugs: depOk?.priorDead ?? null,
+      deployerChecked: depOk?.checked ?? null,
+      deployerUnchecked: depWhy,
+      sniperBundleShare: openOk?.share ?? null,
+      sniperWallets: openOk?.wallets ?? null,
+      openingSlots: openOk?.slots ?? null,
+      openingUnchecked: openWhy,
       sellQuote: sell.sellQuote, sellPriceImpact: sell.sellPriceImpact,
       fdvUsd: pairs?.fdvUsd ?? null, volume24hUsd: pairs?.volume24hUsd ?? null,
       buys24h: pairs?.buys24h ?? null, sells24h: pairs?.sells24h ?? null,

@@ -57,6 +57,8 @@ export interface TokenSnapshot {
   deployerPriorRugs: number | null;
   /** How many prior mints could actually be checked, so a thin sample is visible as one. */
   deployerChecked: number | null;
+  /** Why the deployer could not be traced, when it could not. */
+  deployerUnchecked: string | null;
 
   // ---- the opening blocks ----
   /**
@@ -66,12 +68,18 @@ export interface TokenSnapshot {
   sniperBundleShare: number | null;
   /** How many slots after first activity the measurement covered. */
   openingSlots: number | null;
+  /** Why the opening slots could not be measured, when they could not. */
+  openingUnchecked: string | null;
   /** Distinct wallets in that opening cluster. */
   sniperWallets: number | null;
 
   // ---- can you actually get out? ----
-  /** A quote for selling a small position, round-tripped. null = no quote available. */
-  sellQuote: { inUsd: number; outUsd: number } | null;
+  /**
+   * A quote for buying a small position and selling it straight back. null = no quote available.
+   * Both sides are in the probe currency's own base units, not dollars: only their RATIO is ever used,
+   * which is what lets the probe be wrapped SOL when the token being screened is the USDC quote itself.
+   */
+  sellQuote: { probeIn: number; probeOut: number } | null;
   /** Price impact of a sale at the reference size, 0..1. */
   sellPriceImpact: number | null;
 

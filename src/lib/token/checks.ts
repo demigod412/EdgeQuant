@@ -87,7 +87,7 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   }
 
   // ---- 7. deployer history -----------------------------------------------------------------------
-  if (t.deployerPriorMints == null || t.deployerPriorRugs == null) out.push(unknown("deployerHistory", "Deployer history", "Deployer's earlier mints not traced."));
+  if (t.deployerPriorMints == null || t.deployerPriorRugs == null) out.push(unknown("deployerHistory", "Deployer history", t.deployerUnchecked ?? "Deployer's earlier mints not traced."));
   else if (t.deployerPriorRugs >= LIMITS.maxDeployerRugs)
     add("deployerHistory", "Deployer history", "fail", `${t.deployerPriorRugs} of the ${t.deployerChecked ?? t.deployerPriorMints} earlier mint${(t.deployerChecked ?? t.deployerPriorMints) === 1 ? "" : "s"} from this wallet that could be checked now have no liquidity — abandoned or drained, which look the same from outside. Either way it is a trail of dead launches.`, true);
   else if (t.deployerPriorMints === 0) add("deployerHistory", "Deployer history", "warn", "First mint from this wallet — no track record either way.");
@@ -95,7 +95,7 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   else add("deployerHistory", "Deployer history", "pass", `${t.deployerChecked} earlier mint${t.deployerChecked === 1 ? "" : "s"} from this wallet still have liquidity${t.deployerPriorMints > (t.deployerChecked ?? 0) ? ` (of ${t.deployerPriorMints} launched)` : ""}.`);
 
   // ---- 8. opening-block cluster ------------------------------------------------------------------
-  if (t.sniperBundleShare == null) out.push(unknown("sniperBundle", "Opening blocks", "Early buyers not traced."));
+  if (t.sniperBundleShare == null) out.push(unknown("sniperBundle", "Opening blocks", t.openingUnchecked ?? "Early buyers not traced."));
   else if (t.sniperBundleShare > LIMITS.maxSniperShare)
     add("sniperBundle", "Opening blocks", "fail", `${pct(t.sniperBundleShare)} of supply was taken by ${t.sniperWallets ?? "several"} wallet${t.sniperWallets === 1 ? "" : "s"} within the first ${t.openingSlots ?? 60} slots — the float was gone before anyone else could bid, and it sits above you in the queue to sell. Whether those wallets are one operator is not checked.`, true);
   else if (t.sniperBundleShare > LIMITS.warnSniperShare)
@@ -105,7 +105,7 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   // ---- 9. can you actually sell ------------------------------------------------------------------
   if (!t.sellQuote) out.push(unknown("sellable", "Sell simulation", "No sell quote returned — treat as unproven, not as safe.", true));
   else {
-    const loss = 1 - t.sellQuote.outUsd / Math.max(1e-9, t.sellQuote.inUsd);
+    const loss = 1 - t.sellQuote.probeOut / Math.max(1e-9, t.sellQuote.probeIn);
     const impact = t.sellPriceImpact;
     if (loss >= 0.99) add("sellable", "Sell simulation", "fail", "A sale quotes out at essentially nothing: this is a honeypot — you can buy but not sell.", true);
     else if (loss > LIMITS.maxRoundTripLoss) add("sellable", "Sell simulation", "fail", `Selling straight back loses ${pct(loss)} — a tax or a trap, not a spread.`, true);
