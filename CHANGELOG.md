@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1 — a deploy that shipped nothing and called it success
+
+- **Fix: `update` reported success after a failed pull.** The rsync deploy path ran
+  `git -C "$SRC" pull --ff-only || true`, so a pull that could not merge was swallowed; rsync then
+  copied the *unchanged* tree, the build and restart went ahead, and the script printed
+  "Updated and restarted". The new code was fetched and never checked out, so the running app stayed on
+  the previous version while the log said otherwise. It now stops, says nothing was deployed, and prints
+  the two commands that resolve the usual causes.
+- **Fix: a `chmod +x` blocked every update.** `setup-lightsail.sh` was tracked as mode 100644, so making
+  it executable on the server — which you must do to run it — left a permanent unstaged mode change that
+  `git pull --ff-only` refused to merge past. It is tracked as 100755 now, which is what it always should
+  have been. (`git config core.fileMode false` clears it in a clone that already has the change.)
+
 ## 0.5.0 — it looked like the wrong app, and every page was empty
 
 Three complaints, and all of them traced back to the same thing: EdgeQuant was scaffolded from PitchEdge
