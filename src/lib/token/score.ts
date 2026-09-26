@@ -33,6 +33,18 @@ export interface ScreenGrade {
   warns: CheckResult[];
   /** 0–100, describing how many checks were cleared and how heavily. Descriptive, not predictive. */
   safety: number;
+  /**
+   * Share of the total weight that could actually be evaluated, 0–1.
+   *
+   * Without this the score is misleading in a specific way: an unknown scores zero, so a token whose
+   * LP lock, deployer and opening blocks are all unreadable scores exactly 100 − 34 = 66 no matter what
+   * it is. Every established pump.fun token lands on the same number, which looks like a measurement of
+   * the token and is really a measurement of what the free data tier can see. Coverage is how you tell
+   * a 66 that means "six clean checks and three blind spots" from a 66 that means something was wrong.
+   */
+  coverage: number;
+  /** Counts by verdict, so "why do these all score the same" is answerable from the card itself. */
+  counts: { pass: number; warn: number; fail: number; unknown: number };
   /** One line fit for the top of a card. */
   headline: string;
 }
@@ -54,6 +66,11 @@ export function gradeScreen(checks: CheckResult[]): ScreenGrade {
   const got = checks.reduce((s, c) => s + (WEIGHT[c.id] ?? 5) * (c.verdict === "pass" ? 1 : c.verdict === "warn" ? 0.5 : 0), 0);
   const safety = total ? Math.round((got / total) * 100) : 0;
 
+  const unknownWeight = checks.filter((c) => c.verdict === "unknown").reduce((x, c) => x + (WEIGHT[c.id] ?? 5), 0);
+  const coverage = total ? (total - unknownWeight) / total : 0;
+  const counts = { pass: 0, warn: 0, fail: 0, unknown: 0 };
+  for (const c of checks) counts[c.verdict]++;
+
   const grade: Grade = hardFails.length ? "avoid" : unknownHard.length ? "unproven" : warns.length ? "caution" : "clear";
   const headline =
     grade === "avoid" ? `Avoid — ${hardFails.length} disqualifying ${hardFails.length === 1 ? "finding" : "findings"}: ${hardFails.map((c) => c.label.toLowerCase()).join(", ")}.`
@@ -61,7 +78,7 @@ export function gradeScreen(checks: CheckResult[]): ScreenGrade {
     : grade === "caution" ? `No disqualifying findings, ${warns.length} caution${warns.length === 1 ? "" : "s"}.`
     : "All checks cleared. This says nothing about where the price goes.";
 
-  return { grade, hardFails, unknownHard, warns, safety, headline };
+  return { grade, hardFails, unknownHard, warns, safety, coverage, counts, headline };
 }
 
 /**

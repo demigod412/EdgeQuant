@@ -252,3 +252,40 @@ describe("what people actually paste into the screener", () => {
     expect(ok("")).toMatch(/Paste a Solana mint/);
   });
 });
+
+describe("the score saturates when the same checks are unavailable", () => {
+  /*
+   * Five different tokens screened on the free tier all came back 66/100, because lpLocked (16),
+   * sniperBundle (10) and deployerHistory (8) were unknown on every one of them: 100 - 34 = 66. The
+   * score was reporting the data tier, not the token. Coverage is what makes that legible.
+   */
+  const blind = (over: Partial<TokenSnapshot> = {}) => clean({
+    lpLockedShare: null, lpUnchecked: "LP lock is not checkable on pumpswap.",
+    sniperBundleShare: null, openingUnchecked: "launch out of reach",
+    deployerPriorMints: null, deployerPriorRugs: null, deployerUnchecked: "no creator recorded",
+    ...over,
+  });
+
+  it("gives two unrelated tokens the same score when the same checks cannot run", () => {
+    const a = gradeScreen(runChecks(blind({ liquidityUsd: 328_386, top10Share: 0.217, topHolderShare: 0.084 })));
+    const b = gradeScreen(runChecks(blind({ liquidityUsd: 1_911_123, top10Share: 0.149, topHolderShare: 0.027 })));
+    expect(a.safety).toBe(b.safety);
+    expect(a.safety).toBe(66);
+  });
+
+  it("reports coverage so a 66 of that kind is distinguishable from a 66 with findings", () => {
+    const g = gradeScreen(runChecks(blind()));
+    expect(g.counts).toEqual({ pass: 6, warn: 0, fail: 0, unknown: 3 });
+    expect(g.coverage).toBeCloseTo(0.66, 2);
+    expect(g.grade).toBe("unproven");
+
+    const full = gradeScreen(runChecks(clean()));
+    expect(full.coverage).toBe(1);
+    expect(full.safety).toBe(100);
+  });
+
+  it("does not let a high score on partial data reach 'clear'", () => {
+    // lpLocked is a hard check, so an unreadable one keeps the verdict at unproven however clean the rest is.
+    expect(gradeScreen(runChecks(blind())).grade).not.toBe("clear");
+  });
+});

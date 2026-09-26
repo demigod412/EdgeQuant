@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.6 — why every screen scored the same
+
+- **The score was reporting the data tier, not the token.** Five unrelated tokens all came back 66/100,
+  and the arithmetic says why: the weights sum to 100, and `lpLocked` (16) + `sniperBundle` (10) +
+  `deployerHistory` (8) were unknown on every one of them. 100 − 34 = 66, every time, whatever the token
+  was. As a buy threshold that is false precision. The grade now carries `coverage` — the share of the
+  weight that could actually be evaluated — and `counts` by verdict, and each card says plainly that with
+  n checks unavailable the total is mostly a measure of what could be read. A test pins the 66 so the
+  saturation cannot quietly return.
+- **The full mint address, with a copy button.** It was abbreviated to `777XNv…o777`, which is useless
+  the moment you want to act on the result.
+
 ## 0.5.5 — "made 0, skipped 40" now says why
 
 - **Skip reasons, and the best edge anything came close with.** No open calls is the normal state most of

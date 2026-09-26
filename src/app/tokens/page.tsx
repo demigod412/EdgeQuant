@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { fmtWat } from "@/lib/time";
 import { parseChecks, screenRecord, SETTLE_HOURS } from "@/lib/token/ledger";
 import { SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
+import { CopyButton } from "@/components/CopyButton";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, SectionTitle, cn, pct } from "@/components/ui";
 import { ScreenForm } from "./form";
@@ -89,13 +90,20 @@ export default async function Tokens() {
           {screens.map((s) => {
             const checks = parseChecks(s.checks);
             const errs = Array.isArray(s.errors) ? (s.errors as string[]) : [];
+            // Counted here rather than read off the row: screens recorded before 0.5.6 have no counts
+            // stored, and the checks themselves are the source of truth either way.
+            const n = { pass: 0, warn: 0, fail: 0, unknown: 0 };
+            for (const c of checks) n[c.verdict] = (n[c.verdict] ?? 0) + 1;
             return (
               <Card key={s.id}>
                 <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                   <div className="min-w-0">
-                    <h3 className="truncate text-sm font-medium">
-                      {s.symbol ?? "unknown"} <span className="num text-[11px] text-slate-500">{s.mint.slice(0, 6)}…{s.mint.slice(-4)}</span>
-                    </h3>
+                    <h3 className="text-sm font-medium">{s.symbol ?? "unknown"}</h3>
+                    {/* In full, and copyable: an abbreviated mint is useless the moment you want to act on it. */}
+                    <p className="num mt-0.5 flex items-center gap-2 text-[11px] text-slate-400">
+                      <span className="break-all">{s.mint}</span>
+                      <CopyButton text={s.mint} label="Copy" />
+                    </p>
                     <p className="num text-[11px] text-slate-500">
                       {fmtWat(s.screenedAt, "d MMM HH:mm")}
                       {s.liquidityUsd != null && <> · liquidity ${Math.round(s.liquidityUsd).toLocaleString("en-US")}</>}
@@ -104,7 +112,10 @@ export default async function Tokens() {
                   </div>
                   <div className="text-right">
                     <span className={cn("inline-flex rounded-full border px-2.5 py-1 text-xs capitalize", GRADE_STYLE[s.grade] ?? "hairline")}>{s.grade}</span>
-                    <div className="num mt-1 text-[11px] text-slate-500">{s.safety}/100 checks cleared</div>
+                    <div className="num mt-1 text-[11px] text-slate-500">{s.safety}/100</div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">
+                      {n.pass} cleared · {n.fail} failed · {n.unknown} unavailable
+                    </div>
                   </div>
                 </div>
                 <ul className="grid gap-1 sm:grid-cols-2">
@@ -121,6 +132,13 @@ export default async function Tokens() {
                 {errs.length > 0 && (
                   <p className="mt-2 text-[11px] text-amber">
                     Incomplete screen: {errs.join("; ")}. Missing checks are counted as unknown, never as passed.
+                  </p>
+                )}
+                {n.unknown > 0 && (
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    With {n.unknown} of {checks.length} checks unavailable, the score above is mostly a
+                    measure of what could be read, not of this token — every token with the same blind
+                    spots lands on the same number. Compare the individual findings, not the totals.
                   </p>
                 )}
               </Card>
