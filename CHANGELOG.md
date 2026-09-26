@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.2 — the record counts tokens, not repeated screens of the same token
+
+Re-screening every four hours means one mint contributes many rows, and the record was treating those as
+independent outcomes. Forty tokens screened five times each would have read as two hundred observations,
+the 200-token threshold would have been reached with a fraction of the evidence it represents, and every
+survival rate would have looked far better supported than it was. It is the same error as evaluating a
+model on correlated samples — which is the mistake this whole application is arranged to avoid.
+
+So every rate is now computed from the **earliest settled screen of each mint**: the one made before the
+outcome was known, and therefore the only one that was ever a prediction. Checkpoints are counted once
+per mint and hour. `SURVIVAL_MIN_SETTLED` counts distinct tokens. The raw row count is still reported
+alongside, as `screens` — it shows how much work has been done, which is not the same thing as how much
+evidence exists, and the UI now says which is which.
+
 ## 0.8.1 — three bugs the first fresh-token screens exposed
 
 Screening genuinely new tokens for the first time, rather than established ones, showed up three faults.

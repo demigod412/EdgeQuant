@@ -56,13 +56,13 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
       </Card>
 
       <Card>
-        <SectionTitle aside={record.n ? `${record.n} settled` : "nothing settled yet"}>Does the screener work?</SectionTitle>
+        <SectionTitle aside={record.n ? `${record.n} token${record.n === 1 ? "" : "s"} settled` : "nothing settled yet"}>Does the screener work?</SectionTitle>
         {record.checkpoints.length > 0 && (
           <div className="mb-3">
             <p className="text-[11px] uppercase tracking-wide text-slate-500">Still tradeable at each checkpoint</p>
             <p className="num mt-1 text-sm text-slate-200">
               {record.checkpoints.map((c) => (
-                <span key={c.hours} className="mr-4">{c.hours}h <span className={c.survivalRate >= 0.9 ? "text-edge" : "text-amber"}>{pct(c.survivalRate)}</span> <span className="text-[11px] text-slate-500">of {c.n}</span></span>
+                <span key={c.hours} className="mr-4">{c.hours}h <span className={c.survivalRate >= 0.9 ? "text-edge" : "text-amber"}>{pct(c.survivalRate)}</span> <span className="text-[11px] text-slate-500">of {c.n} token{c.n === 1 ? "" : "s"}</span></span>
               ))}
             </p>
             <p className="mt-1 text-[11px] text-slate-500">
@@ -99,8 +99,11 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
             )}
             {record.n < SURVIVAL_MIN_SETTLED && (
               <p className="mt-2 text-[11px] text-slate-500">
-                {record.n} of {SURVIVAL_MIN_SETTLED} settled screens needed before a calibrated survival
-                probability is fitted. Reading a rate off this few is how you fool yourself.
+                {record.n} of {SURVIVAL_MIN_SETTLED} settled <em>tokens</em> needed before a calibrated
+                survival probability is fitted &mdash; distinct tokens, not screens, because a watched
+                token is re-screened every few hours and those repeats are not independent outcomes.
+                {record.screens > record.n && <> {record.screens} settled screens so far cover {record.n}.</>}
+                {" "}Reading a rate off this few is how you fool yourself.
               </p>
             )}
           </>

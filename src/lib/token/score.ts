@@ -104,6 +104,13 @@ export function gradeScreen(checks: CheckResult[]): ScreenGrade {
  * intact and selling still working. Null until the ledger has enough settled screens to fit, which is
  * the honest state rather than a placeholder number.
  */
+/**
+ * Distinct tokens that must have settled before a survival probability is fitted.
+ *
+ * Distinct TOKENS, not screens. A watched token is re-screened every few hours, and counting those
+ * repeats as independent outcomes would let the threshold be reached with a fraction of the evidence it
+ * is meant to represent.
+ */
 export const SURVIVAL_MIN_SETTLED = 200;
 
 export interface SurvivalModel { intercept: number; weights: Partial<Record<string, number>>; n: number; horizonHours: number }

@@ -90,30 +90,64 @@ export async function settleScreens(db: PrismaClient, now = new Date()) {
  * sample is visible as one.
  */
 export async function screenRecord(db: PrismaClient) {
-  const rows = await db.tokenScreen.findMany({ where: { settledAt: { not: null } }, select: { grade: true, survived: true, failureKind: true } });
-  // Checkpoint survival is counted from every screen that has reached the hour, settled or not: waiting
-  // a full day to learn what was true at six hours would throw away the only timely signal there is.
-  const early = await db.tokenScreen.findMany({ where: { NOT: { checkpoints: { equals: [] } } }, select: { grade: true, checkpoints: true } });
+  /*
+   * ── One observation per token ───────────────────────────────────────────────────────────────────
+   *
+   * A token is re-screened every few hours while it is being watched, so the same mint contributes many
+   * rows. Counting those rows as independent outcomes would overstate the evidence badly: forty tokens
+   * screened five times each is forty observations dressed up as two hundred, and every survival rate
+   * computed from them would look far better supported than it is. It is the same error as testing a
+   * model on correlated samples.
+   *
+   * So every rate here is computed from the EARLIEST settled screen of each mint — the one that was made
+   * before the outcome was known, which is the only one that was ever a prediction. The raw row count is
+   * reported separately as `screens`, because it is still worth seeing how much work has been done.
+   */
+  const rows = await db.tokenScreen.findMany({
+    where: { settledAt: { not: null } },
+    orderBy: { screenedAt: "asc" },
+    select: { mint: true, grade: true, survived: true, failureKind: true },
+  });
+  const firstPerMint = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) if (!firstPerMint.has(r.mint)) firstPerMint.set(r.mint, r);
+  const settled = [...firstPerMint.values()];
+
+  // Checkpoint survival is counted from every token that has reached the hour, settled or not: waiting a
+  // full day to learn what was true at six hours would throw away the only timely signal there is.
+  // Deduplicated the same way, and for the same reason.
+  const early = await db.tokenScreen.findMany({
+    where: { NOT: { checkpoints: { equals: [] } } },
+    orderBy: { screenedAt: "asc" },
+    select: { mint: true, checkpoints: true },
+  });
   const byHour = new Map<number, { n: number; survived: number }>();
+  const seenHour = new Set<string>();
   for (const r of early) {
     for (const c of parseCheckpoints(r.checkpoints)) {
+      const key = `${r.mint}@${c.hours}`;
+      if (seenHour.has(key)) continue;
+      seenHour.add(key);
       const e = byHour.get(c.hours) ?? { n: 0, survived: 0 };
       e.n++; if (c.survived) e.survived++;
       byHour.set(c.hours, e);
     }
   }
+
   const byGrade = new Map<string, { n: number; survived: number }>();
-  for (const r of rows) {
+  for (const r of settled) {
     const e = byGrade.get(r.grade) ?? { n: 0, survived: 0 };
     e.n++; if (r.survived) e.survived++;
     byGrade.set(r.grade, e);
   }
   const failures = new Map<string, number>();
-  for (const r of rows) if (r.failureKind) failures.set(r.failureKind, (failures.get(r.failureKind) ?? 0) + 1);
+  for (const r of settled) if (r.failureKind) failures.set(r.failureKind, (failures.get(r.failureKind) ?? 0) + 1);
   return {
     checkpoints: [...byHour.entries()].sort((a, b) => a[0] - b[0])
       .map(([hours, e]) => ({ hours, n: e.n, survivalRate: e.n ? e.survived / e.n : 0 })),
-    n: rows.length,
+    /** Distinct tokens with a settled outcome. This is what the survival threshold counts. */
+    n: settled.length,
+    /** Settled rows, repeats included. Work done, not evidence gathered. */
+    screens: rows.length,
     byGrade: [...byGrade.entries()].map(([grade, e]) => ({ grade, n: e.n, survivalRate: e.n ? e.survived / e.n : 0 })),
     failures: [...failures.entries()].map(([kind, n]) => ({ kind, n })).sort((a, b) => b.n - a.n),
   };

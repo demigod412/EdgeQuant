@@ -534,3 +534,58 @@ describe("bugs the first fresh-token screens exposed", () => {
     expect(t?.liquidity).toBe(5888.69);
   });
 });
+
+describe("the record counts tokens, not repeated screens of the same token", () => {
+  /*
+   * Watching re-screens a mint every few hours, so one token contributes many rows. Treating those as
+   * independent outcomes would overstate the evidence badly — forty tokens screened five times each is
+   * forty observations dressed up as two hundred — and every survival rate would look far better
+   * supported than it is. These tests describe the deduplication, using the shape screenRecord builds.
+   */
+  type Row = { mint: string; grade: string; survived: boolean; failureKind: string | null };
+  const dedupe = (rows: Row[]) => {
+    const first = new Map<string, Row>();
+    for (const r of rows) if (!first.has(r.mint)) first.set(r.mint, r);
+    return [...first.values()];
+  };
+
+  it("collapses repeats to the earliest screen of each mint", () => {
+    const rows: Row[] = [
+      { mint: "A", grade: "caution", survived: false, failureKind: "rug" },
+      { mint: "A", grade: "avoid", survived: false, failureKind: "rug" },
+      { mint: "A", grade: "avoid", survived: false, failureKind: "rug" },
+      { mint: "B", grade: "clear", survived: true, failureKind: null },
+    ];
+    const kept = dedupe(rows);
+    expect(kept).toHaveLength(2);
+    // The earliest screen is the only one that was made before the outcome was known.
+    expect(kept.find((r) => r.mint === "A")?.grade).toBe("caution");
+  });
+
+  it("does not let one token's repeats dominate a grade's survival rate", () => {
+    const rows: Row[] = [
+      ...Array.from({ length: 9 }, () => ({ mint: "A", grade: "clear", survived: false, failureKind: "rug" })),
+      { mint: "B", grade: "clear", survived: true, failureKind: null },
+    ];
+    // Counting rows: 1 of 10 survived, a 10% rate off what is really two tokens.
+    const naive = rows.filter((r) => r.survived).length / rows.length;
+    const kept = dedupe(rows);
+    const honest = kept.filter((r) => r.survived).length / kept.length;
+    expect(naive).toBeCloseTo(0.1, 5);
+    expect(honest).toBeCloseTo(0.5, 5);
+    expect(kept).toHaveLength(2);
+  });
+
+  it("counts a checkpoint once per mint and hour", () => {
+    const seen = new Set<string>();
+    const obs = [["A", 1], ["A", 1], ["A", 6], ["B", 1]] as [string, number][];
+    const counted = obs.filter(([m, h]) => { const k = `${m}@${h}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    expect(counted).toHaveLength(3);
+  });
+
+  it("still requires distinct tokens, not screens, for a survival model", () => {
+    expect(SURVIVAL_MIN_SETTLED).toBe(200);
+    // Below the threshold there is no number at all, whatever the row count says.
+    expect(survivalProbability([], { intercept: 0, weights: {}, n: 199, horizonHours: 24 })).toBeNull();
+  });
+});

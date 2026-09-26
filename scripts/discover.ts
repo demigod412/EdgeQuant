@@ -23,5 +23,7 @@ const db = new PrismaClient();
   if (Object.keys(r.skipped).length) console.log(`\npassed over: ${Object.entries(r.skipped).map(([k, n]) => `${n} ${k}`).join(", ")}`);
   const rec = await screenRecord(db);
   const total = await db.tokenScreen.count();
-  console.log(`\nledger: ${total} screens, ${rec.n} settled${rec.checkpoints.length ? ` · ${rec.checkpoints.map((c) => `${c.hours}h ${(c.survivalRate * 100).toFixed(0)}% of ${c.n}`).join(" · ")}` : ""}`);
+  // Tokens, not rows: a watched mint is re-screened every few hours, and those repeats are not
+  // independent outcomes, so the threshold counts distinct tokens.
+  console.log(`\nledger: ${total} screens · ${rec.n} tokens settled (from ${rec.screens} settled screens)${rec.checkpoints.length ? ` · ${rec.checkpoints.map((c) => `${c.hours}h ${(c.survivalRate * 100).toFixed(0)}% of ${c.n} tokens`).join(" · ")}` : ""}`);
 })().catch((e) => { console.error(e); process.exitCode = 1; }).finally(() => db.$disconnect());
