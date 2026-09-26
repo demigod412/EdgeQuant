@@ -10,8 +10,8 @@ import { CHECKPOINT_HOURS, SETTLE_HOURS, parseCheckpoints, type Checkpoint } fro
  * Screen a token and record it. Append-only: a re-screen is a new row, so what was known at the time
  * is never rewritten by what is known now — the same rule the signal ledger follows.
  */
-export async function screenToken(db: PrismaClient, mint: string, opts: { source?: "manual" | "auto" } = {}) {
-  const { snap, errors } = await snapshot(mint);
+export async function screenToken(db: PrismaClient, mint: string, opts: { source?: "manual" | "auto"; probeUsd?: number } = {}) {
+  const { snap, errors } = await snapshot(mint, { probeUsd: opts.probeUsd });
   const checks = runChecks(snap);
   const g = gradeScreen(checks);
   const row = await db.tokenScreen.create({

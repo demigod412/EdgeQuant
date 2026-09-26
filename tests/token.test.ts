@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
-import { sellProbe } from "@/lib/token/probe";
+import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
@@ -20,7 +20,7 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200,
   deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3, deployerUnchecked: null,
   sniperBundleShare: 0.02, sniperWallets: 3, openingSlots: 60, openingUnchecked: null,
-  sellQuote: { probeIn: 50, probeOut: 48.5 }, sellPriceImpact: 0.01,
+  sellQuote: { probeIn: 50, probeOut: 48.5 }, sellPriceImpact: 0.01, sellProbeUsd: 50,
   fdvUsd: 900_000, volume24hUsd: 300_000, buys24h: 900, sells24h: 800,
   ...over,
 });
@@ -403,5 +403,36 @@ describe("choosing what to auto-screen", () => {
   it("survives a feed shape it does not recognise", () => {
     expect(parseRecent({})).toEqual([]);
     expect(parseRecent(null)).toEqual([]);
+  });
+});
+
+describe("the sell probe is a size, and the size is part of the answer", () => {
+  it("scales the probe amount with the dollar figure asked for", () => {
+    expect(sellProbe("SomeMemeMint111111111111111111111111111111", 50).amount).toBe(50e6);
+    expect(sellProbe("SomeMemeMint111111111111111111111111111111", 500).amount).toBe(500e6);
+  });
+
+  it("reports the size it used, so a cost figure is never sizeless", () => {
+    expect(sellProbe("SomeMemeMint111111111111111111111111111111", 500).usd).toBe(500);
+    // Screening USDC routes through wrapped SOL, but the dollar figure asked for is still what it says.
+    expect(sellProbe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 500).usd).toBe(500);
+  });
+
+  it("states the size in the check detail", () => {
+    // "round-trips at 2% cost" is not a fact about a token until you know what was being sold.
+    const c = find(clean({ sellQuote: { probeIn: 500e6, probeOut: 490e6 }, sellProbeUsd: 500 }), "sellable");
+    expect(c.detail).toContain("$500");
+  });
+
+  it("says a thin pool is thin rather than implying a trap", () => {
+    const c = find(clean({ sellQuote: { probeIn: 500e6, probeOut: 495e6 }, sellPriceImpact: 0.3, sellProbeUsd: 500 }), "sellable");
+    expect(c.verdict).toBe("warn");
+    expect(c.detail).toMatch(/thin for that size/);
+  });
+
+  it("keeps the automatic probe fixed so the survival record stays comparable", () => {
+    // A probe that followed SELL_PROBE_USD would make rows mean different things, and a large probe
+    // against the small pools discovery finds would fail on arithmetic rather than on findings.
+    expect(AUTO_PROBE_USD).toBe(50);
   });
 });

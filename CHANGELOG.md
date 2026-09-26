@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1 — a cost figure without its size is not a measurement
+
+Raising `SELL_PROBE_USD` to a real position size exposed two problems with having one global probe.
+
+- **Automatic screens now use a fixed size of their own.** Discovery finds pools of a few thousand
+  dollars, and a $500 probe against a $5,000 pool is a tenth of the pool: it would breach the price-impact
+  threshold on almost everything and fill the survival record with rejections that are arithmetic rather
+  than findings. It would also make rows incomparable, since the figures would drift with whatever
+  `SELL_PROBE_USD` happened to be that week. `TOKEN_AUTO_PROBE_USD` is separate and fixed; the record
+  needs comparable measurements, your buy decision needs your size, and those are different needs.
+- **Every screen records the size it was measured at, and every verdict states it.** "Round-trips at 2%
+  cost" is not a fact about a token until you know what was being sold — the same token round-trips at
+  0.4% for $50 and far worse for $5,000. A thin pool is now also described as thin for that size, rather
+  than with wording that implied a tax or a trap.
+
 ## 0.7.0 — the record fills itself, and the list can be tidied without editing the record
 
 ### Automatic screening

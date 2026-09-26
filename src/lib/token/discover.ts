@@ -23,6 +23,8 @@ import type { PrismaClient } from "@prisma/client";
  * the cron interval, and raising either raises credit use proportionally.
  */
 
+import { AUTO_PROBE_USD } from "./probe";
+
 export const DISCOVER_URL = process.env.TOKEN_DISCOVER_URL ?? "https://lite-api.jup.ag/tokens/v2/recent";
 
 /** How many to screen per run. The binding constraint is RPC credits, not the feed. */
@@ -143,7 +145,8 @@ export async function discoverAndScreen(db: PrismaClient, opts: { now?: Date; li
   const results: { mint: string; grade: string }[] = [];
   for (const c of take) {
     try {
-      const { grade } = await screenToken(db, c.mint, { source: "auto" });
+      // A fixed probe, not the configured one: see AUTO_PROBE_USD. The record has to be comparable.
+      const { grade } = await screenToken(db, c.mint, { source: "auto", probeUsd: AUTO_PROBE_USD });
       results.push({ mint: c.mint, grade: grade.grade });
     } catch (e) {
       // One bad token must not end the run: the next one is a fresh attempt.

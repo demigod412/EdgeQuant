@@ -107,10 +107,13 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   else {
     const loss = 1 - t.sellQuote.probeOut / Math.max(1e-9, t.sellQuote.probeIn);
     const impact = t.sellPriceImpact;
+    // The size is part of every statement here. Price impact scales with it, so "round-trips at 2%" is
+    // not a fact about the token until you know what was being sold.
+    const at = t.sellProbeUsd != null ? ` at ${usd(t.sellProbeUsd)}` : "";
     if (loss >= 0.99) add("sellable", "Sell simulation", "fail", "A sale quotes out at essentially nothing: this is a honeypot — you can buy but not sell.", true);
-    else if (loss > LIMITS.maxRoundTripLoss) add("sellable", "Sell simulation", "fail", `Selling straight back loses ${pct(loss)} — a tax or a trap, not a spread.`, true);
-    else if (impact != null && impact > LIMITS.maxSellImpact) add("sellable", "Sell simulation", "warn", `Round trip costs ${pct(loss)}; a sale at the reference size moves the price ${pct(impact)}.`);
-    else add("sellable", "Sell simulation", "pass", `A sale round-trips at ${pct(loss)} cost${impact != null ? `, price impact ${pct(impact)}` : ""}.`);
+    else if (loss > LIMITS.maxRoundTripLoss) add("sellable", "Sell simulation", "fail", `Selling${at} straight back loses ${pct(loss)} — a tax, a trap, or a pool too thin for that size.`, true);
+    else if (impact != null && impact > LIMITS.maxSellImpact) add("sellable", "Sell simulation", "warn", `Round trip${at} costs ${pct(loss)}, and the sale moves the price ${pct(impact)} — the pool is thin for that size.`);
+    else add("sellable", "Sell simulation", "pass", `A sale${at} round-trips at ${pct(loss)} cost${impact != null ? `, price impact ${pct(impact)}` : ""}.`);
   }
 
   return out;

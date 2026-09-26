@@ -148,18 +148,18 @@ async function quote(url: string) {
   } finally { clearTimeout(t); }
 }
 
-export async function simulateSell(mint: string, decimals: number | null) {
-  const { via, amount: probe } = sellProbe(mint);
+export async function simulateSell(mint: string, decimals: number | null, probeUsd = SELL_PROBE_USD) {
+  const { via, amount: probe, usd } = sellProbe(mint, probeUsd);
   const buy = await quote(`${JUP}/quote?inputMint=${via}&outputMint=${mint}&amount=${probe}&slippageBps=300`);
   const tokenOut = Number(buy.outAmount ?? 0);
-  if (!tokenOut) return { sellQuote: null, sellPriceImpact: null, sellNote: null };
+  if (!tokenOut) return { sellQuote: null, sellPriceImpact: null, sellNote: null, sellProbeUsd: usd };
   let refused: string | null = null;
   const sell = await quote(`${JUP}/quote?inputMint=${mint}&outputMint=${via}&amount=${Math.floor(tokenOut)}&slippageBps=300`)
     .catch((e: Error) => { refused = e.message; return null; });
   if (!sell?.outAmount) {
     // The buy quotes and the sale does not: the defining shape of a honeypot. The verdict stands on its
     // own, but carry the refusal out too, so a routing outage is not read as a trap.
-    return { sellQuote: { probeIn: probe, probeOut: 0 }, sellPriceImpact: null, sellNote: refused };
+    return { sellQuote: { probeIn: probe, probeOut: 0 }, sellPriceImpact: null, sellNote: refused, sellProbeUsd: usd };
   }
   const impact = Number(sell.priceImpactPct ?? 0);
   void decimals;
@@ -167,11 +167,12 @@ export async function simulateSell(mint: string, decimals: number | null) {
     sellQuote: { probeIn: probe, probeOut: Number(sell.outAmount) },
     sellPriceImpact: Number.isFinite(impact) ? Math.abs(impact) : null,
     sellNote: null,
+    sellProbeUsd: usd,
   };
 }
 
 /** Assemble a snapshot, tolerating each source failing on its own. */
-export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; errors: string[] }> {
+export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): Promise<{ snap: TokenSnapshot; errors: string[] }> {
   const errors: string[] = [];
   const observedAt = new Date();
   const pairs = await readPairs(mint).catch((e) => { errors.push(`pools: ${(e as Error).message}`); return null; });
@@ -183,7 +184,7 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
   // authorities, no supply and no holders as if that were a finding about the token.
   else if (!m) errors.push("this address has no mint account, so it is not a token — a DexScreener URL gives you the pool address, not the token's");
   const holders = await readHolders(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`holders: ${(e as Error).message}`); return null; });
-  const sell = await simulateSell(mint, m?.decimals ?? null).catch((e) => { errors.push(`sell quote: ${(e as Error).message}`); return { sellQuote: null, sellPriceImpact: null, sellNote: null }; });
+  const sell = await simulateSell(mint, m?.decimals ?? null, opts.probeUsd).catch((e) => { errors.push(`sell quote: ${(e as Error).message}`); return { sellQuote: null, sellPriceImpact: null, sellNote: null, sellProbeUsd: opts.probeUsd ?? SELL_PROBE_USD }; });
   if (sell.sellNote) errors.push(`sell side refused: ${sell.sellNote}`);
 
   // The three that need indexed history. Each failure is recorded and leaves its check unknown.
@@ -229,7 +230,8 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
       sniperWallets: openOk?.wallets ?? null,
       openingSlots: openOk?.slots ?? null,
       openingUnchecked: openWhy,
-      sellQuote: sell.sellQuote, sellPriceImpact: sell.sellPriceImpact,
+      sellQuote: sell.sellQuote,
+      sellProbeUsd: sell.sellProbeUsd, sellPriceImpact: sell.sellPriceImpact,
       fdvUsd: pairs?.fdvUsd ?? null, volume24hUsd: pairs?.volume24hUsd ?? null,
       buys24h: pairs?.buys24h ?? null, sells24h: pairs?.sells24h ?? null,
     },

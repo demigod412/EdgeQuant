@@ -80,6 +80,13 @@ export interface TokenSnapshot {
    * which is what lets the probe be wrapped SOL when the token being screened is the USDC quote itself.
    */
   sellQuote: { probeIn: number; probeOut: number } | null;
+  /**
+   * Position size the round trip was measured at, in dollars.
+   *
+   * Recorded per screen because price impact scales with size: the same token round-trips at 0.4% for
+   * $50 and far worse for $5,000, and a cost figure without its size is not a measurement.
+   */
+  sellProbeUsd: number | null;
   /** Price impact of a sale at the reference size, 0..1. */
   sellPriceImpact: number | null;
 
