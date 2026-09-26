@@ -18,10 +18,16 @@ import { deployerHistory, lpLock, openingBlocks } from "./helius";
 
 const RPC = () => process.env.SOLANA_RPC_URL ?? "";
 const DEX = "https://api.dexscreener.com";
-const JUP = process.env.JUPITER_QUOTE_URL ?? "https://quote-api.jup.ag/v6";
+/**
+ * Jupiter's v6 host (quote-api.jup.ag) no longer resolves; every sell simulation failed on it with a
+ * bare "fetch failed". lite-api is the current keyless tier and returns the same shape.
+ */
+const JUP = process.env.JUPITER_QUOTE_URL ?? "https://lite-api.jup.ag/swap/v1";
 /** Size used for the sell simulation, in USD. Small enough to be realistic, big enough to be honest. */
 export const SELL_PROBE_USD = Number(process.env.SELL_PROBE_USD) || 50;
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+/** The classic SPL Token program. A mint it owns cannot carry Token-2022 extensions. */
+const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 const BURN = new Set([
   "1nc1nerator11111111111111111111111111111111",
@@ -56,7 +62,7 @@ const rpc = async <T>(method: string, params: unknown[]): Promise<T | null> => {
 /** Mint account: authorities and Token-2022 extensions. These are the facts that matter most. */
 export async function readMint(mint: string) {
   type Parsed = {
-    value?: { data?: { parsed?: { info?: { mintAuthority?: string | null; freezeAuthority?: string | null; decimals?: number; supply?: string;
+    value?: { owner?: string; data?: { parsed?: { info?: { mintAuthority?: string | null; freezeAuthority?: string | null; decimals?: number; supply?: string;
       extensions?: { extension: string; state?: { newerTransferFee?: { transferFeeBasisPoints?: number }; transferFeeConfigAuthority?: string } }[] } } } };
   };
   const r = await rpc<Parsed["value"] extends infer _ ? Parsed : never>("getAccountInfo", [mint, { encoding: "jsonParsed" }]);
@@ -64,20 +70,32 @@ export async function readMint(mint: string) {
   if (!info) return null;
   const exts = info.extensions ?? [];
   const fee = exts.find((e) => e.extension === "transferFeeConfig");
+  /*
+   * Transfer fees and hooks are Token-2022 features and cannot exist on a classic SPL mint. The owning
+   * program says which this is, so a classic mint reports 0 and false as facts rather than reporting
+   * "extensions not read" and costing itself a check it had already answered.
+   */
+  const classic = r?.value?.owner === TOKEN_PROGRAM;
   return {
     mintAuthority: info.mintAuthority ?? null,
     freezeAuthority: info.freezeAuthority ?? null,
     decimals: info.decimals ?? null,
     supply: info.supply ?? null,
-    transferFeeBps: fee?.state?.newerTransferFee?.transferFeeBasisPoints ?? (exts.length ? 0 : null),
-    hasTransferHook: exts.length ? exts.some((e) => e.extension === "transferHook") : null,
+    transferFeeBps: fee?.state?.newerTransferFee?.transferFeeBasisPoints ?? (classic || exts.length ? 0 : null),
+    hasTransferHook: classic ? false : exts.length ? exts.some((e) => e.extension === "transferHook") : null,
   };
 }
 
 /** Largest holders, with the pool and burn addresses set aside so concentration means what it says. */
 export async function readHolders(mint: string, poolAddresses: string[]) {
   type Largest = { value?: { address: string; uiAmount: number | null }[] };
-  const r = await rpc<Largest>("getTokenLargestAccounts", [mint]);
+  // Refused on mints with an enormous number of accounts (a major stablecoin, not a new token).
+  // The message matters: "unavailable" reads like a broken key, which sends you looking in the wrong place.
+  const r = await rpc<Largest>("getTokenLargestAccounts", [mint]).catch((e) => {
+    throw new Error(/too many accounts/i.test((e as Error).message)
+      ? "too many holder accounts to rank — normal for a major token, not for a new one"
+      : (e as Error).message);
+  });
   const rows = r?.value ?? null;
   if (!rows) return null;
   const supplyRes = await rpc<{ value?: { uiAmount: number | null } }>("getTokenSupply", [mint]);

@@ -101,6 +101,30 @@ describe("token checks", () => {
   });
 });
 
+describe("bugs found on the first live screen", () => {
+  it("a classic SPL mint has no extensions, so transfer rules are a pass not an unknown", () => {
+    // Fees and hooks are Token-2022 features; a classic mint answers this by construction. Reporting
+    // "extensions not read" threw away a check that had already been answered.
+    expect(find(clean({ transferFeeBps: 0, hasTransferHook: false }), "transferRules").verdict).toBe("pass");
+    // Only a genuinely unread Token-2022 mint stays unknown.
+    expect(find(clean({ transferFeeBps: null, hasTransferHook: null }), "transferRules").verdict).toBe("unknown");
+  });
+
+  it("does not claim 'first mint from this wallet' when the deployer was never identified", () => {
+    // The old fallback used the mint authority as the deployer, so USDC screened as a first-time
+    // launch. Nothing identified means unknown.
+    const c = find(clean({ deployer: null, deployerPriorMints: null, deployerPriorRugs: null, deployerChecked: null }), "deployerHistory");
+    expect(c.verdict).toBe("unknown");
+    expect(c.detail).not.toMatch(/first mint/i);
+  });
+
+  it("still reports a genuine first launch as a caution", () => {
+    const c = find(clean({ deployer: "dep", deployerPriorMints: 0, deployerPriorRugs: 0, deployerChecked: 0 }), "deployerHistory");
+    expect(c.verdict).toBe("warn");
+    expect(c.detail).toMatch(/First mint from this wallet/);
+  });
+});
+
 describe("the three history-based checks", () => {
   it("names the DEX when LP lock cannot be checked, rather than passing it", () => {
     const c = find(clean({ lpLockedShare: null, lpUnchecked: "LP lock is not checkable on orca." }), "lpLocked");

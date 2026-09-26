@@ -124,13 +124,19 @@ export async function lpLock(dexId: string | null, pairAddress: string | null): 
 // 2. Deployer history
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** The creator recorded on the asset, which for launchpad tokens is the deployer. */
+/**
+ * The creator recorded on the asset, which for launchpad tokens is the deployer.
+ *
+ * Only a real `creators` entry counts. This used to fall back to the first *authority*, which is the
+ * mint authority — a different thing entirely. On USDC that resolved to Circle's authority, found none
+ * of its mints indexed by creator, and reported "first mint from this wallet" about the largest
+ * stablecoin on Solana. Returning null instead makes the check read "unknown", which is true.
+ */
 async function creatorOf(mint: string): Promise<string | null> {
   if (!isHelius()) return null;
-  type Asset = { creators?: { address?: string; share?: number }[]; authorities?: { address?: string }[] };
+  type Asset = { creators?: { address?: string; share?: number }[] };
   const a = await rpc<Asset>("getAsset", { id: mint });
-  const c = (a?.creators ?? []).find((x) => x.address)?.address;
-  return c ?? a?.authorities?.[0]?.address ?? null;
+  return (a?.creators ?? []).find((x) => x.address)?.address ?? null;
 }
 
 /**

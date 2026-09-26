@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.2 — four bugs the first live screen exposed
+- **Fix: the sell simulation never ran.** Jupiter's v6 host (`quote-api.jup.ag`) no longer resolves, so every
+  screen failed it with a bare "fetch failed" — losing the one check that can tell a honeypot from a token
+  that merely reads clean. Now on `lite-api.jup.ag/swap/v1`, the current keyless tier, same response shape.
+- **Fix: transfer rules reported "extensions not read" for classic SPL tokens.** Transfer fees and hooks are
+  Token-2022 features and cannot exist on a classic mint, so the owning program already answers the question.
+  A classic mint now passes on the facts instead of throwing away a check it had answered.
+- **Fix: the deployer check claimed "first mint from this wallet" when no deployer had been identified.** The
+  lookup fell back to the first *authority* if the asset had no creator — which is the mint authority, a
+  different thing. On USDC that resolved to Circle's authority, found nothing indexed under it, and reported
+  the largest stablecoin on Solana as a first-time launch. Only a real creator entry counts now; otherwise the
+  check reads unknown, which is true. A wrong answer is worse than no answer.
+- **Fix: "holder list unavailable" on tokens with millions of accounts.** `getTokenLargestAccounts` is refused
+  above a certain account count. It now says so — normal for a major token, not for a new one — rather than a
+  message that reads like a broken key and sends you looking in the wrong place.
+- The package called itself `pitchedge`, so every npm script announced the wrong app.
+
 ## 0.4.1 — the three history-based checks, via Helius
 - **LP burn or lock** now resolves the pool's LP mint through Raydium's public pool API, then reads the LP
   supply and holders: burned outright, parked at an incinerator, or sitting in a known lock program all count
