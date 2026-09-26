@@ -86,8 +86,43 @@ export async function readMint(mint: string) {
   };
 }
 
-/** Largest holders, with the pool and burn addresses set aside so concentration means what it says. */
-export async function readHolders(mint: string, poolAddresses: string[]) {
+/**
+ * Pool authorities: the accounts that own an AMM's token accounts. Not the pool address itself.
+ *
+ * Deliberately incomplete, and that is handled below rather than pretended away — there is no closed
+ * list of every AMM on Solana, so an unrecognised pool is treated as an unanswerable question instead of
+ * as a whale.
+ */
+const POOL_AUTHORITIES = new Set([
+  "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",  // Raydium AMM v4 authority
+  "GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL",  // Raydium CPMM authority
+  "3uaZBfLJKMwEMFSxhcYtYqfLUzabh7hoWWMmNvvOXbFN",  // Raydium CLMM authority
+]);
+
+/**
+ * A single holder above this share, on a token that has a live pool, is far more likely to be a pool
+ * account we failed to recognise than a wallet. Reported as unknown rather than as a finding.
+ */
+const AMBIGUOUS_TOP_SHARE = 0.5;
+
+/**
+ * Largest holders, with pool and burn accounts set aside so concentration means what it says.
+ *
+ * ── The bug this replaces ───────────────────────────────────────────────────────────────────────────
+ * `getTokenLargestAccounts` returns TOKEN ACCOUNT addresses. The pool list from DexScreener holds PAIR
+ * addresses. Those are different kinds of address, so `pools.has(account.address)` could never match and
+ * the pool was never actually excluded — it was simply ranked as the biggest holder.
+ *
+ * On an established token that barely showed: the pool holds a few percent and the numbers looked
+ * plausible. On a new token, where the curve or pool holds almost the entire supply, it produced
+ * "largest single wallet 100.0%" — a false finding, on a token where nothing was wrong.
+ *
+ * The fix is to resolve each account's OWNER and exclude by that. One extra call for up to twenty
+ * accounts.
+ */
+export async function readHolders(mint: string, poolAddresses: string[]): Promise<
+  { top10Share: number; topHolderShare: number; holdersRanked: number } | { unchecked: string } | null
+> {
   type Largest = { value?: { address: string; uiAmount: number | null }[] };
   // Refused on mints with an enormous number of accounts (a major stablecoin, not a new token).
   // The message matters: "unavailable" reads like a broken key, which sends you looking in the wrong place.
@@ -97,14 +132,39 @@ export async function readHolders(mint: string, poolAddresses: string[]) {
       : (e as Error).message);
   });
   const rows = r?.value ?? null;
-  if (!rows) return null;
+  if (!rows?.length) return null;
   const supplyRes = await rpc<{ value?: { uiAmount: number | null } }>("getTokenSupply", [mint]);
   const supply = supplyRes?.value?.uiAmount ?? null;
   if (!supply) return null;
+
+  // Resolve who owns each of those token accounts.
+  type Multi = { value?: ({ data?: { parsed?: { info?: { owner?: string } } } } | null)[] };
+  const owners = await rpc<Multi>("getMultipleAccounts", [rows.map((x) => x.address), { encoding: "jsonParsed" }]).catch(() => null);
+  if (!owners?.value) {
+    // Without owners the pool cannot be told from a wallet, and a number that might be the pool is
+    // worse than no number: it reads as a finding about the distribution.
+    return { unchecked: "holder accounts could not be attributed to owners, so pool balances cannot be told apart from wallets" };
+  }
+  const ownerOf = rows.map((x, i) => owners.value?.[i]?.data?.parsed?.info?.owner ?? null);
+
   const pools = new Set(poolAddresses);
-  const outside = rows.filter((x) => !pools.has(x.address) && !BURN.has(x.address));
-  const share = (n: number) => outside.slice(0, n).reduce((s, x) => s + (x.uiAmount ?? 0), 0) / supply;
-  return { top10Share: Math.min(1, share(10)), topHolderShare: Math.min(1, share(1)) };
+  const excluded = (i: number) => {
+    const acct = rows[i].address, owner = ownerOf[i];
+    if (BURN.has(acct)) return true;
+    if (!owner) return false;
+    return pools.has(owner) || POOL_AUTHORITIES.has(owner) || BURN.has(owner);
+  };
+  const outside = rows.filter((_, i) => !excluded(i));
+  if (!outside.length) {
+    // Every ranked account belongs to a pool or a burn address: nobody is holding it outside the market.
+    return { top10Share: 0, topHolderShare: 0, holdersRanked: 0 };
+  }
+  const share = (n: number) => Math.min(1, outside.slice(0, n).reduce((s, x) => s + (x.uiAmount ?? 0), 0) / supply);
+  const top = share(1);
+  if (top >= AMBIGUOUS_TOP_SHARE && poolAddresses.length) {
+    return { unchecked: `the largest account holds ${(top * 100).toFixed(1)}% and could not be matched to a known pool — on a token with a live market that is more likely an unrecognised pool than a wallet, so it is not reported as concentration` };
+  }
+  return { top10Share: share(10), topHolderShare: top, holdersRanked: outside.length };
 }
 
 /** Pools, liquidity and volume. No key needed. */
@@ -184,7 +244,10 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
   // by accident — which a copied DexScreener URL invites — would otherwise report a token with no
   // authorities, no supply and no holders as if that were a finding about the token.
   else if (!m) errors.push("this address has no mint account, so it is not a token — a DexScreener URL gives you the pool address, not the token's");
-  const holders = await readHolders(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`holders: ${(e as Error).message}`); return null; });
+  const holdersRes = await readHolders(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`holders: ${(e as Error).message}`); return null; });
+  const holders = holdersRes && !("unchecked" in holdersRes) ? holdersRes : null;
+  const holdersWhy = holdersRes && "unchecked" in holdersRes ? holdersRes.unchecked : null;
+  if (holdersWhy) errors.push(`holder concentration: ${holdersWhy}`);
   const sell = await simulateSell(mint, m?.decimals ?? null, opts.probeUsd).catch((e) => { errors.push(`sell quote: ${(e as Error).message}`); return { sellQuote: null, sellPriceImpact: null, sellNote: null, sellProbeUsd: opts.probeUsd ?? SELL_PROBE_USD }; });
   if (sell.sellNote) errors.push(`sell side refused: ${sell.sellNote}`);
 
@@ -213,7 +276,9 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
       freezeAuthorityRenounced: m ? m.freezeAuthority == null : null,
       transferFeeBps: m?.transferFeeBps ?? null,
       hasTransferHook: m?.hasTransferHook ?? null,
-      liquidityUsd: pairs?.liquidityUsd ?? null,
+      // DexScreener does not index a pool the instant it opens, and reported $0 for tokens Jupiter had
+      // already priced at several thousand. Its own figure is preferred when it has one.
+      liquidityUsd: pairs?.liquidityUsd || jup?.liquidity || null,
       dexId: pairs?.dexId ?? null,
       // The reason is a sentence when it explains itself and a DEX name when it does not; the old
       // template assumed the latter and produced "not checkable on Raydium did not return an LP mint".
@@ -222,7 +287,8 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
         : null,
       lpLockedShare: lp && "lockedShare" in lp ? lp.lockedShare : null,
       lpTopHolderShare: lp && "topHolderShare" in lp ? lp.topHolderShare : null,
-      top10Share: holders?.top10Share ?? null, topHolderShare: holders?.topHolderShare ?? null,
+      top10Share: holders?.top10Share ?? null,
+      concentrationUnchecked: holdersWhy, topHolderShare: holders?.topHolderShare ?? null,
       holderCount: jup?.holderCount ?? null,
       deployer: depOk?.deployer ?? null,
       deployerPriorMints: depOk?.priorMints ?? null,

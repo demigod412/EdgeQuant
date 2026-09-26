@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.1 — three bugs the first fresh-token screens exposed
+
+Screening genuinely new tokens for the first time, rather than established ones, showed up three faults.
+The first had been producing false findings since the screener was written.
+
+- **Fix: pool balances were being reported as whales.** `getTokenLargestAccounts` returns token ACCOUNT
+  addresses; the pool list from DexScreener holds PAIR addresses. Those are different kinds of address,
+  so the exclusion could never match and the pool was simply ranked as the biggest holder. On an
+  established token it barely showed — a pool holding a few percent looks like a plausible wallet — but
+  on a new token, where the curve holds nearly the whole supply, it reported *"Top 10 hold 100.0%,
+  largest single wallet 100.0%"* about tokens where nothing was wrong. Each account's owner is now
+  resolved and excluded by that. Where an owner cannot be attributed, or a single unattributed account
+  holds more than half the supply on a token with a live market, concentration reports **unknown** with
+  the reason: the list of AMM authorities will never be complete, and an unrecognised pool must not be
+  presented as a finding about the distribution.
+- **Fix: the grade ladder ignored non-disqualifying failures entirely.** It ran hard fails → avoid,
+  unknown-hard → unproven, warnings → caution, else clear. A soft failure appeared nowhere, so a token
+  whose only problem was a failing check graded `caution` on the strength of its *warnings* — or `clear`
+  if it had none — and the headline read "No disqualifying findings" directly above a FAIL in the list.
+  A failure is a failure; only whether it disqualifies on its own was ever in question.
+- **Fix: "$0 in the pool" next to a working sell quote.** DexScreener does not index a pool the instant
+  it opens, and reported zero for tokens Jupiter had already priced at several thousand dollars. Its
+  figure is used when DexScreener has none, from the same lookup that already provides the deployer.
+
 ## 0.8.0 — a second look every four hours, and a deployer we can usually name
 
 ### Re-screening on its own schedule

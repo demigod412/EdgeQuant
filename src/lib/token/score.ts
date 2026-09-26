@@ -30,6 +30,8 @@ export interface ScreenGrade {
   grade: Grade;
   hardFails: CheckResult[];
   unknownHard: CheckResult[];
+  /** Failures on checks that are not disqualifying alone. Still failures. */
+  softFails: CheckResult[];
   warns: CheckResult[];
   /** 0–100, describing how many checks were cleared and how heavily. Descriptive, not predictive. */
   safety: number;
@@ -58,6 +60,15 @@ const WEIGHT: Record<string, number> = {
 export function gradeScreen(checks: CheckResult[]): ScreenGrade {
   const hardFails = checks.filter((c) => c.hard && c.verdict === "fail");
   const unknownHard = checks.filter((c) => c.hard && c.verdict === "unknown");
+  /*
+   * Failures on the checks that are not disqualifying on their own.
+   *
+   * These were missing from the ladder altogether, and the omission was serious: a token whose only
+   * problem was a soft failure fell through to "caution" on the strength of its warnings, or to
+   * "clear" if it had none — and the headline read "No disqualifying findings" directly above a FAIL in
+   * the list. A failure is a failure; only whether it disqualifies on its own is in question.
+   */
+  const softFails = checks.filter((c) => !c.hard && c.verdict === "fail");
   const warns = checks.filter((c) => c.verdict === "warn");
 
   // Safety is a weighted share of the checks cleared. An unknown scores zero: a check that could not
@@ -71,14 +82,21 @@ export function gradeScreen(checks: CheckResult[]): ScreenGrade {
   const counts = { pass: 0, warn: 0, fail: 0, unknown: 0 };
   for (const c of checks) counts[c.verdict]++;
 
-  const grade: Grade = hardFails.length ? "avoid" : unknownHard.length ? "unproven" : warns.length ? "caution" : "clear";
+  const grade: Grade = hardFails.length ? "avoid"
+    : unknownHard.length ? "unproven"
+    : softFails.length || warns.length ? "caution"
+    : "clear";
+  const names = (cs: CheckResult[]) => cs.map((c) => c.label.toLowerCase()).join(", ");
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const headline =
-    grade === "avoid" ? `Avoid — ${hardFails.length} disqualifying ${hardFails.length === 1 ? "finding" : "findings"}: ${hardFails.map((c) => c.label.toLowerCase()).join(", ")}.`
-    : grade === "unproven" ? `Unproven — ${unknownHard.length} critical ${unknownHard.length === 1 ? "check" : "checks"} could not be run: ${unknownHard.map((c) => c.label.toLowerCase()).join(", ")}. Not the same as safe.`
-    : grade === "caution" ? `No disqualifying findings, ${warns.length} caution${warns.length === 1 ? "" : "s"}.`
+    grade === "avoid" ? `Avoid — ${plural(hardFails.length, "disqualifying finding", "disqualifying findings")}: ${names(hardFails)}.`
+    : grade === "unproven" ? `Unproven — ${plural(unknownHard.length, "critical check", "critical checks")} could not be run: ${names(unknownHard)}. Not the same as safe.`
+    : grade === "caution" ? (softFails.length
+        ? `${plural(softFails.length, "check fails", "checks fail")} — ${names(softFails)}${warns.length ? `, with ${plural(warns.length, "caution", "cautions")}` : ""}. Not disqualifying on their own, but not clean.`
+        : `No disqualifying findings, ${plural(warns.length, "caution", "cautions")}.`)
     : "All checks cleared. This says nothing about where the price goes.";
 
-  return { grade, hardFails, unknownHard, warns, safety, coverage, counts, headline };
+  return { grade, hardFails, unknownHard, softFails, warns, safety, coverage, counts, headline };
 }
 
 /**

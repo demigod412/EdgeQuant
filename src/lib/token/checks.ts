@@ -78,13 +78,13 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   else add("liquidityDepth", "Liquidity depth", "warn", `${usd(t.liquidityUsd)} in the pool — thin enough that the quoted price is not the price you would get.`);
 
   // ---- 6. holder concentration -------------------------------------------------------------------
-  if (t.top10Share == null) out.push(unknown("concentration", "Holder concentration", "Holder list unavailable."));
+  if (t.top10Share == null) out.push(unknown("concentration", "Holder concentration", t.concentrationUnchecked ?? "Holder list unavailable."));
   else {
     const top = t.topHolderShare;
     const worst = Math.max(t.top10Share > LIMITS.maxTop10 ? 2 : t.top10Share > LIMITS.warnTop10 ? 1 : 0,
       top != null && top > LIMITS.maxTopHolder ? 2 : 0);
     const detail = `Top 10 hold ${pct(t.top10Share)}${top != null ? `, largest single wallet ${pct(top)}` : ""}`
-      + `${t.holderCount != null ? `, ${t.holderCount.toLocaleString("en-US")} holders` : ""}.`;
+      + `${t.holderCount != null ? `, ${t.holderCount.toLocaleString("en-US")} holder${t.holderCount === 1 ? "" : "s"}` : ""}.`;
     add("concentration", "Holder concentration", worst === 2 ? "fail" : worst === 1 ? "warn" : "pass",
       worst === 2 ? `${detail} A few wallets can exit into whatever bid exists.` : detail);
   }

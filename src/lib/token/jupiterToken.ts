@@ -30,6 +30,8 @@ export interface JupiterToken {
   devMints: number | null;
   launchpad: string | null;
   holderCount: number | null;
+  /** Liquidity as Jupiter has it, used only when DexScreener has not indexed the pool yet. */
+  liquidity: number | null;
 }
 
 export function parseJupiterToken(json: unknown, mint: string): JupiterToken | null {
@@ -44,6 +46,7 @@ export function parseJupiterToken(json: unknown, mint: string): JupiterToken | n
     devMints: n(audit.devMints),
     launchpad: s(hit.launchpad),
     holderCount: n(hit.holderCount),
+    liquidity: n(hit.liquidity),
   };
 }
 

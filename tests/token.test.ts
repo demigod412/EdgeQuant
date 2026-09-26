@@ -18,7 +18,7 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   freezeAuthority: null, freezeAuthorityRenounced: true,
   transferFeeBps: 0, hasTransferHook: false,
   liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpLockedShare: 1, lpTopHolderShare: 0,
-  top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200,
+  top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200, concentrationUnchecked: null,
   deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3, deployerUnchecked: null,
   deployerHoldShare: 0, deployerAttributedMints: null, deployerIdentifiedBy: "creator", launchpad: null,
   sniperBundleShare: 0.02, sniperWallets: 3, openingSlots: 60, openingUnchecked: null,
@@ -477,12 +477,60 @@ describe("the deployer, once Jupiter can name them", () => {
     // a way to be wrong. Only identity and the mint count are taken from here.
     const t = parseJupiterToken([{ id: "m", dev: "devwallet", launchpad: "pump.fun", holderCount: 42,
       audit: { devMints: 3, devBalancePercentage: 9 }, mintAuthority: "someone", organicScore: 88 }], "m");
-    expect(t).toEqual({ dev: "devwallet", devMints: 3, launchpad: "pump.fun", holderCount: 42 });
+    expect(t).toEqual({ dev: "devwallet", devMints: 3, launchpad: "pump.fun", holderCount: 42, liquidity: null });
   });
 
   it("returns null when the feed has no record of the mint", () => {
     expect(parseJupiterToken([{ id: "other" }], "m")).toBeNull();
     expect(parseJupiterToken([], "m")).toBeNull();
     expect(parseJupiterToken(null, "m")).toBeNull();
+  });
+});
+
+describe("bugs the first fresh-token screens exposed", () => {
+  it("never grades a token clear while a check is failing", () => {
+    /*
+     * The ladder was: hard fails -> avoid, unknown hard -> unproven, warns -> caution, else clear.
+     * A soft failure appeared nowhere in it, so a token whose only problem was a failing concentration
+     * check graded "clear" when it had no warnings, and the headline read "No disqualifying findings"
+     * directly above a FAIL in the list.
+     */
+    const g = gradeScreen(runChecks(clean({ top10Share: 0.9, topHolderShare: 0.8 })));
+    expect(g.softFails.map((c) => c.id)).toEqual(["concentration"]);
+    expect(g.grade).toBe("caution");
+    expect(g.grade).not.toBe("clear");
+    expect(g.headline).toMatch(/check fails/);
+    expect(g.headline).not.toMatch(/No disqualifying findings/);
+    expect(g.headline).not.toMatch(/All checks cleared/);
+  });
+
+  it("still says nothing-disqualifying when only warnings are present", () => {
+    const g = gradeScreen(runChecks(clean({ liquidityUsd: 9_000 })));
+    expect(g.grade).toBe("caution");
+    expect(g.softFails).toEqual([]);
+    expect(g.headline).toMatch(/No disqualifying findings/);
+  });
+
+  it("reports concentration as unknown, not as a whale, when a pool cannot be identified", () => {
+    // Pool exclusion compared token-account addresses against pair addresses, which can never match, so
+    // a new token whose curve holds the supply was reported as "largest single wallet 100.0%".
+    const c = find(clean({
+      top10Share: null, topHolderShare: null,
+      concentrationUnchecked: "the largest account holds 99.8% and could not be matched to a known pool",
+    }), "concentration");
+    expect(c.verdict).toBe("unknown");
+    expect(c.detail).toMatch(/could not be matched to a known pool/);
+  });
+
+  it("counts a single holder as one holder", () => {
+    expect(find(clean({ holderCount: 1 }), "concentration").detail).toMatch(/1 holder\./);
+    expect(find(clean({ holderCount: 2 }), "concentration").detail).toMatch(/2 holders\./);
+  });
+
+  it("takes Jupiter's liquidity when DexScreener has not indexed the pool", () => {
+    // DexScreener reported $0 for tokens Jupiter had already priced in the thousands, and "$0 in the
+    // pool" alongside a working sell quote is self-contradictory.
+    const t = parseJupiterToken([{ id: "m", liquidity: 5888.69 }], "m");
+    expect(t?.liquidity).toBe(5888.69);
   });
 });

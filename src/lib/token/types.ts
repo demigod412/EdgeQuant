@@ -42,6 +42,8 @@ export interface TokenSnapshot {
   // ---- distribution: how concentrated is the float? ----
   /** Share held by the top 10 holders excluding the pool and burn addresses, 0..1. */
   top10Share: number | null;
+  /** Why concentration could not be established, when it could not. */
+  concentrationUnchecked: string | null;
   /** Largest non-pool holder, 0..1. */
   topHolderShare: number | null;
   holderCount: number | null;
