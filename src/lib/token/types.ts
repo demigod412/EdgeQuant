@@ -30,6 +30,10 @@ export interface TokenSnapshot {
 
   // ---- liquidity: can it be pulled out from under you? ----
   liquidityUsd: number | null;
+  /** Which DEX the deepest pool is on; LP checkability depends on it. */
+  dexId: string | null;
+  /** Why the LP check could not run, when it could not. */
+  lpUnchecked: string | null;
   /** Share of LP tokens burned or held by a lock program, 0..1. */
   lpLockedShare: number | null;
   /** Largest single LP holder's share, 0..1. One wallet holding the pool can empty it. */
@@ -46,12 +50,22 @@ export interface TokenSnapshot {
   deployer: string | null;
   /** Mints this deployer has created before. */
   deployerPriorMints: number | null;
-  /** How many of those ended with liquidity removed. The single most informative number here. */
+  /**
+   * How many of the deployer's earlier mints now have no liquidity. A proxy: abandoned and drained
+   * look identical from outside, and the wording shown to the user says so.
+   */
   deployerPriorRugs: number | null;
+  /** How many prior mints could actually be checked, so a thin sample is visible as one. */
+  deployerChecked: number | null;
 
   // ---- the opening blocks ----
-  /** Share of supply bought in the first slots by wallets funded from one source, 0..1. */
+  /**
+   * Share of supply taken in the opening slots, 0..1. Measures timing, not collusion: proving the
+   * wallets are one operator would mean tracing how each was funded.
+   */
   sniperBundleShare: number | null;
+  /** How many slots after first activity the measurement covered. */
+  openingSlots: number | null;
   /** Distinct wallets in that opening cluster. */
   sniperWallets: number | null;
 

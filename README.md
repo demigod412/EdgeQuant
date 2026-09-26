@@ -43,6 +43,19 @@ What the screener does instead is keep score. Every screen is recorded append-on
 page shows the realised survival rate of each grade. A calibrated survival probability is fitted once 200 screens
 have settled, and is absent until then, the same way the signal models run as identity until 50 settled calls.
 
+**Sources.** Solana RPC for the authorities, Token-2022 extensions and holder distribution; DexScreener for
+pools and liquidity; Jupiter for the sell quote. Three checks need indexed history and use Helius: LP burn or
+lock (resolved via Raydium's pool API, and treated as locked on launchpad curves where the program holds the
+liquidity), the deployer's earlier mints (via the asset's creator, then whether those mints still have
+liquidity), and the opening slots (a capped signature walk back to the launch, then parsed transfers). Set
+`SOLANA_RPC_URL` to a Helius endpoint and all three work on the free plan; every call is spaced and every walk
+is capped, and hitting a cap yields unknown rather than a pass.
+
+Two of those three are **proxies, and say so on screen**: a prior mint with no liquidity today may have been
+abandoned rather than drained, and wallets buying in the same opening slots may be one operator or unrelated
+bots racing — proving either would mean tracing how each was funded. The check reports the timing and the
+count, and claims nothing beyond them.
+
 A check that could not run counts as **unknown**, never as a pass. A screen missing its critical checks grades
 "unproven", which is not the same as safe. Clearing every check is not a reason to buy: it means only that the
 ways of losing which can be checked have been checked.

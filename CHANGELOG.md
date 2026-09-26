@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.1 — the three history-based checks, via Helius
+- **LP burn or lock** now resolves the pool's LP mint through Raydium's public pool API, then reads the LP
+  supply and holders: burned outright, parked at an incinerator, or sitting in a known lock program all count
+  as locked, and the largest live holder is reported separately because one wallet holding the pool can empty
+  it alone. On launchpad curves (pump.fun, Moonshot) the liquidity is held by the program and nobody can
+  withdraw it, which is a pass. On any other DEX the check names the DEX and stays **unknown** rather than
+  guessing.
+- **Deployer history** reads the asset's recorded creator, lists that wallet's other mints, and checks in one
+  request which of them still have liquidity. Stated as a **proxy, on screen**: a dead mint may have been
+  abandoned rather than drained, and the two are indistinguishable from outside. The detail says how many of
+  the prior mints could actually be checked, so a thin sample is visible as one, and a deployer whose earlier
+  mints never traded earns a caution rather than a pass.
+- **Opening slots** walks the mint's signatures back to its first activity, takes the transactions in the
+  first 60 slots, and sums the supply that moved into non-pool wallets. Reported as **timing, not collusion**:
+  wallets buying in the same opening slots may be one operator or unrelated bots racing, and the earlier
+  wording asserted "co-funded wallets" without ever checking how they were funded. It now says what it
+  measured and that the rest is unchecked. The walk is capped, and a launch beyond the cap yields unknown
+  rather than a share computed from partial history.
+- Free-plan shaped: every call spaced under the 10/second limit, every walk capped, and running out of budget
+  produces unknown, never a pass.
+
 ## 0.4.0 — token screener
 - **New Token screener page and `npm run screen`.** Nine checks on a Solana mint, each a pure function of
   a normalised snapshot so it can be tested and, later, scored against what actually happened:

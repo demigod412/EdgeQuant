@@ -10,10 +10,10 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   mintAuthority: null, mintAuthorityRenounced: true,
   freezeAuthority: null, freezeAuthorityRenounced: true,
   transferFeeBps: 0, hasTransferHook: false,
-  liquidityUsd: 120_000, lpLockedShare: 1, lpTopHolderShare: 0,
+  liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpLockedShare: 1, lpTopHolderShare: 0,
   top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200,
-  deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0,
-  sniperBundleShare: 0.02, sniperWallets: 3,
+  deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3,
+  sniperBundleShare: 0.02, sniperWallets: 3, openingSlots: 60,
   sellQuote: { inUsd: 50, outUsd: 48.5 }, sellPriceImpact: 0.01,
   fdvUsd: 900_000, volume24hUsd: 300_000, buys24h: 900, sells24h: 800,
   ...over,
@@ -98,6 +98,47 @@ describe("token checks", () => {
   it("thresholds are the documented ones", () => {
     expect(find(clean({ liquidityUsd: LIMITS.minLiquidityUsd }), "liquidityDepth").verdict).toBe("pass");
     expect(find(clean({ liquidityUsd: LIMITS.minLiquidityUsd - 1 }), "liquidityDepth").verdict).toBe("warn");
+  });
+});
+
+describe("the three history-based checks", () => {
+  it("names the DEX when LP lock cannot be checked, rather than passing it", () => {
+    const c = find(clean({ lpLockedShare: null, lpUnchecked: "LP lock is not checkable on orca." }), "lpLocked");
+    expect(c.verdict).toBe("unknown");
+    expect(c.hard).toBe(true);
+    expect(c.detail).toBe("LP lock is not checkable on orca.");
+  });
+
+  it("treats a launchpad pool, whose liquidity nobody can withdraw, as locked", () => {
+    expect(find(clean({ lpLockedShare: 1, lpTopHolderShare: 0 }), "lpLocked").verdict).toBe("pass");
+  });
+
+  it("describes dead prior launches as abandoned-or-drained, not as proven theft", () => {
+    const c = find(clean({ deployerPriorMints: 6, deployerPriorRugs: 3, deployerChecked: 5 }), "deployerHistory");
+    expect(c.verdict).toBe("fail");
+    expect(c.detail).toMatch(/abandoned or drained/);
+    // Says how many were actually checkable, so a thin sample is visible.
+    expect(c.detail).toMatch(/3 of the 5/);
+  });
+
+  it("does not credit a deployer whose earlier mints never traded", () => {
+    const c = find(clean({ deployerPriorMints: 4, deployerPriorRugs: 0, deployerChecked: 0 }), "deployerHistory");
+    expect(c.verdict).toBe("warn");
+    expect(c.detail).toMatch(/none of which ever traded/);
+  });
+
+  it("reports opening-slot timing without claiming the wallets are one operator", () => {
+    const c = find(clean({ sniperBundleShare: 0.4, sniperWallets: 9, openingSlots: 60 }), "sniperBundle");
+    expect(c.verdict).toBe("fail");
+    expect(c.detail).toMatch(/9 wallets within the first 60 slots/);
+    expect(c.detail).toMatch(/not checked/);
+    // The old wording asserted collusion we never verified.
+    expect(c.detail).not.toMatch(/co-funded/);
+  });
+
+  it("leaves the opening-slot check unknown when the launch is out of reach", () => {
+    const c = find(clean({ sniperBundleShare: null }), "sniperBundle");
+    expect(c.verdict).toBe("unknown");
   });
 });
 

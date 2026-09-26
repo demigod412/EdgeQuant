@@ -63,7 +63,7 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   else add("transferRules", "Transfer rules", "pass", "No transfer fee and no transfer hook.");
 
   // ---- 4. LP locked or burned --------------------------------------------------------------------
-  if (t.lpLockedShare == null) out.push(unknown("lpLocked", "Liquidity locked", "Could not read the LP holders.", true));
+  if (t.lpLockedShare == null) out.push(unknown("lpLocked", "Liquidity locked", t.lpUnchecked ?? "Could not read the LP holders.", true));
   else if (t.lpLockedShare >= LIMITS.minLpLocked) add("lpLocked", "Liquidity locked", "pass", `${pct(t.lpLockedShare)} of LP burned or locked.`, true);
   else if (t.lpTopHolderShare != null && t.lpTopHolderShare > LIMITS.maxLpTopHolder)
     add("lpLocked", "Liquidity locked", "fail", `Only ${pct(t.lpLockedShare)} of LP is locked and one wallet holds ${pct(t.lpTopHolderShare)} of it — the pool can be withdrawn, leaving your tokens unsellable at any price.`, true);
@@ -89,17 +89,18 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   // ---- 7. deployer history -----------------------------------------------------------------------
   if (t.deployerPriorMints == null || t.deployerPriorRugs == null) out.push(unknown("deployerHistory", "Deployer history", "Deployer's earlier mints not traced."));
   else if (t.deployerPriorRugs >= LIMITS.maxDeployerRugs)
-    add("deployerHistory", "Deployer history", "fail", `This deployer has ${t.deployerPriorRugs} earlier mint${t.deployerPriorRugs === 1 ? "" : "s"} whose liquidity was removed, out of ${t.deployerPriorMints}. Past behaviour is the strongest signal available here.`, true);
+    add("deployerHistory", "Deployer history", "fail", `${t.deployerPriorRugs} of the ${t.deployerChecked ?? t.deployerPriorMints} earlier mint${(t.deployerChecked ?? t.deployerPriorMints) === 1 ? "" : "s"} from this wallet that could be checked now have no liquidity — abandoned or drained, which look the same from outside. Either way it is a trail of dead launches.`, true);
   else if (t.deployerPriorMints === 0) add("deployerHistory", "Deployer history", "warn", "First mint from this wallet — no track record either way.");
-  else add("deployerHistory", "Deployer history", "pass", `${t.deployerPriorMints} earlier mint${t.deployerPriorMints === 1 ? "" : "s"} from this deployer, none with liquidity removed.`);
+  else if ((t.deployerChecked ?? 0) === 0) add("deployerHistory", "Deployer history", "warn", `${t.deployerPriorMints} earlier mint${t.deployerPriorMints === 1 ? "" : "s"} from this wallet, none of which ever traded — nothing to judge them on.`);
+  else add("deployerHistory", "Deployer history", "pass", `${t.deployerChecked} earlier mint${t.deployerChecked === 1 ? "" : "s"} from this wallet still have liquidity${t.deployerPriorMints > (t.deployerChecked ?? 0) ? ` (of ${t.deployerPriorMints} launched)` : ""}.`);
 
   // ---- 8. opening-block cluster ------------------------------------------------------------------
   if (t.sniperBundleShare == null) out.push(unknown("sniperBundle", "Opening blocks", "Early buyers not traced."));
   else if (t.sniperBundleShare > LIMITS.maxSniperShare)
-    add("sniperBundle", "Opening blocks", "fail", `${pct(t.sniperBundleShare)} of supply was taken in the opening slots by ${t.sniperWallets ?? "several"} co-funded wallets — the float was captured before anyone else could bid, and they are above you in the queue to sell.`, true);
+    add("sniperBundle", "Opening blocks", "fail", `${pct(t.sniperBundleShare)} of supply was taken by ${t.sniperWallets ?? "several"} wallet${t.sniperWallets === 1 ? "" : "s"} within the first ${t.openingSlots ?? 60} slots — the float was gone before anyone else could bid, and it sits above you in the queue to sell. Whether those wallets are one operator is not checked.`, true);
   else if (t.sniperBundleShare > LIMITS.warnSniperShare)
-    add("sniperBundle", "Opening blocks", "warn", `${pct(t.sniperBundleShare)} of supply taken in the opening slots by ${t.sniperWallets ?? "several"} co-funded wallets.`);
-  else add("sniperBundle", "Opening blocks", "pass", `${pct(t.sniperBundleShare)} of supply taken in the opening slots.`);
+    add("sniperBundle", "Opening blocks", "warn", `${pct(t.sniperBundleShare)} of supply taken by ${t.sniperWallets ?? "several"} wallet${t.sniperWallets === 1 ? "" : "s"} in the first ${t.openingSlots ?? 60} slots.`);
+  else add("sniperBundle", "Opening blocks", "pass", `${pct(t.sniperBundleShare)} of supply taken in the first ${t.openingSlots ?? 60} slots.`);
 
   // ---- 9. can you actually sell ------------------------------------------------------------------
   if (!t.sellQuote) out.push(unknown("sellable", "Sell simulation", "No sell quote returned — treat as unproven, not as safe.", true));

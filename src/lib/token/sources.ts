@@ -1,5 +1,6 @@
 import "server-only";
 import type { TokenSnapshot } from "./types";
+import { deployerHistory, lpLock, openingBlocks } from "./helius";
 
 /*
  * Gathering a snapshot. Three independent sources, each optional:
@@ -90,7 +91,7 @@ export async function readHolders(mint: string, poolAddresses: string[]) {
 
 /** Pools, liquidity and volume. No key needed. */
 export async function readPairs(mint: string) {
-  type Pair = { chainId: string; pairAddress: string; baseToken: { address: string; symbol?: string; name?: string };
+  type Pair = { chainId: string; pairAddress: string; dexId?: string; baseToken: { address: string; symbol?: string; name?: string };
     liquidity?: { usd?: number }; fdv?: number; volume?: { h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
   const r = await get<{ pairs?: Pair[] | null }>(`${DEX}/latest/dex/tokens/${mint}`);
   const pairs = (r.pairs ?? []).filter((p) => p.chainId === "solana");
@@ -98,6 +99,8 @@ export async function readPairs(mint: string) {
   const deepest = pairs.reduce((a, b) => ((b.liquidity?.usd ?? 0) > (a.liquidity?.usd ?? 0) ? b : a));
   return {
     poolAddresses: pairs.map((p) => p.pairAddress),
+    deepestPair: deepest.pairAddress,
+    dexId: deepest.dexId ?? null,
     symbol: deepest.baseToken.symbol ?? null,
     name: deepest.baseToken.name ?? null,
     liquidityUsd: pairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0),
@@ -142,6 +145,14 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
   const holders = await readHolders(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`holders: ${(e as Error).message}`); return null; });
   const sell = await simulateSell(mint, m?.decimals ?? null).catch((e) => { errors.push(`sell quote: ${(e as Error).message}`); return { sellQuote: null, sellPriceImpact: null }; });
 
+  // The three that need indexed history. Each failure is recorded and leaves its check unknown.
+  const lp = await lpLock(pairs?.dexId ?? null, pairs?.deepestPair ?? null)
+    .catch((e) => { errors.push(`LP lock: ${(e as Error).message}`); return null; });
+  const dep = await deployerHistory(mint).catch((e) => { errors.push(`deployer history: ${(e as Error).message}`); return null; });
+  const open = await openingBlocks(mint, pairs?.poolAddresses ?? []).catch((e) => { errors.push(`opening slots: ${(e as Error).message}`); return null; });
+  if (!dep) errors.push("deployer not identified — needs a Helius key to read the asset's creator");
+  if (!open) errors.push("opening slots not measured — the launch is older than the signature walk allows, or no Helius key");
+
   return {
     errors,
     snap: {
@@ -154,13 +165,19 @@ export async function snapshot(mint: string): Promise<{ snap: TokenSnapshot; err
       transferFeeBps: m?.transferFeeBps ?? null,
       hasTransferHook: m?.hasTransferHook ?? null,
       liquidityUsd: pairs?.liquidityUsd ?? null,
-      // LP lock and the opening-block cluster need indexed history; left null until that source exists,
-      // which the grade reports as "unproven" rather than passing them by default.
-      lpLockedShare: null, lpTopHolderShare: null,
+      dexId: pairs?.dexId ?? null,
+      lpUnchecked: lp && "unchecked" in lp ? `LP lock is not checkable on ${lp.unchecked}.` : null,
+      lpLockedShare: lp && "lockedShare" in lp ? lp.lockedShare : null,
+      lpTopHolderShare: lp && "topHolderShare" in lp ? lp.topHolderShare : null,
       top10Share: holders?.top10Share ?? null, topHolderShare: holders?.topHolderShare ?? null,
       holderCount: null,
-      deployer: null, deployerPriorMints: null, deployerPriorRugs: null,
-      sniperBundleShare: null, sniperWallets: null,
+      deployer: dep?.deployer ?? null,
+      deployerPriorMints: dep?.priorMints ?? null,
+      deployerPriorRugs: dep?.priorDead ?? null,
+      deployerChecked: dep?.checked ?? null,
+      sniperBundleShare: open?.share ?? null,
+      sniperWallets: open?.wallets ?? null,
+      openingSlots: open?.slots ?? null,
       sellQuote: sell.sellQuote, sellPriceImpact: sell.sellPriceImpact,
       fdvUsd: pairs?.fdvUsd ?? null, volume24hUsd: pairs?.volume24hUsd ?? null,
       buys24h: pairs?.buys24h ?? null, sells24h: pairs?.sells24h ?? null,
