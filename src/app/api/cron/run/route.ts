@@ -22,6 +22,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, review: await reviewSetups(prisma), funding: await syncFunding(prisma), portfolio: await rebuildPortfolio(prisma) });
   }
   if (job === "signals") return NextResponse.json({ ok: true, ...(await generateSignals(prisma)) });
+  if (job === "discover") {
+    const { discoverAndScreen } = await import("@/lib/token/discover");
+    return NextResponse.json({ ok: true, ...(await discoverAndScreen(prisma)) });
+  }
   if (job === "summary") {
     const { sendAlert, summaryMessage } = await import("@/lib/alerts");
     const [open, today, all] = await Promise.all([

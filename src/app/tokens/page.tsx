@@ -3,9 +3,10 @@ import { fmtWat } from "@/lib/time";
 import { CHECKPOINT_HOURS, parseChecks, screenRecord, SETTLE_HOURS, type Checkpoint } from "@/lib/token/ledger";
 import { SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { CopyButton } from "@/components/CopyButton";
+import Link from "next/link";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, SectionTitle, cn, pct } from "@/components/ui";
-import { ScreenForm } from "./form";
+import { RemoveButton, ScreenForm } from "./form";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Token screener" };
@@ -21,10 +22,18 @@ const VERDICT_STYLE: Record<string, string> = {
 };
 const VERDICT_MARK: Record<string, string> = { pass: "✓", warn: "!", fail: "✕", unknown: "?" };
 
-export default async function Tokens() {
-  const [screens, record] = await Promise.all([
-    prisma.tokenScreen.findMany({ orderBy: { screenedAt: "desc" }, take: 40 }),
+export default async function Tokens({ searchParams }: { searchParams: Promise<{ show?: string }> }) {
+  // Automatic screens fill the survival record and would bury your own a few hundred rows deep, so the
+  // list shows yours by default. Hidden ones are excluded from the list but never from the record.
+  const show = (await searchParams).show === "all" ? "all" : "mine";
+  const [screens, record, autoCount, hiddenCount] = await Promise.all([
+    prisma.tokenScreen.findMany({
+      where: { hiddenAt: null, ...(show === "mine" ? { source: "manual" } : {}) },
+      orderBy: { screenedAt: "desc" }, take: 40,
+    }),
     screenRecord(prisma),
+    prisma.tokenScreen.count({ where: { source: "auto" } }),
+    prisma.tokenScreen.count({ where: { hiddenAt: { not: null } } }),
   ]);
 
   return (
@@ -98,7 +107,23 @@ export default async function Tokens() {
         )}
       </Card>
 
-      <SectionTitle aside={screens.length ? `last ${screens.length}` : undefined}>Screens</SectionTitle>
+      <SectionTitle aside={screens.length ? `last ${screens.length}` : undefined}>
+        {show === "mine" ? "Your screens" : "All screens"}
+      </SectionTitle>
+      <p className="-mt-1 mb-2 text-[11px] text-slate-500">
+        {autoCount > 0 ? (
+          <>
+            <span className="num">{autoCount.toLocaleString("en-US")}</span> screened automatically from
+            tokens whose first pool has just opened — that is what builds the record above.{" "}
+            <Link href={show === "mine" ? "/tokens?show=all" : "/tokens"} className="underline underline-offset-2">
+              {show === "mine" ? "Show those too" : "Show only mine"}
+            </Link>
+          </>
+        ) : (
+          <>Automatic screening runs twice an hour and has not recorded anything yet.</>
+        )}
+        {hiddenCount > 0 && <> · <span className="num">{hiddenCount}</span> hidden, still counted in the record.</>}
+      </p>
       {screens.length === 0 ? (
         <EmptyState title="No screens yet" body="Paste a Solana mint address above. Every screen is recorded and judged later, so the record above fills in on its own." />
       ) : (
@@ -130,11 +155,13 @@ export default async function Tokens() {
                     </p>
                   </div>
                   <div className="text-right">
+                    {s.source === "auto" && <span className="mr-2 rounded-md border hairline px-1.5 py-0.5 text-[10px] text-slate-500">auto</span>}
                     <span className={cn("inline-flex rounded-full border px-2.5 py-1 text-xs capitalize", GRADE_STYLE[s.grade] ?? "hairline")}>{s.grade}</span>
                     <div className="num mt-1 text-[11px] text-slate-500">{s.safety}/100</div>
                     <div className="mt-0.5 text-[11px] text-slate-500">
                       {n.pass} cleared · {n.fail} failed · {n.unknown} unavailable
                     </div>
+                    <div className="mt-1"><RemoveButton id={s.id} /></div>
                   </div>
                 </div>
                 <ul className="grid gap-1 sm:grid-cols-2">

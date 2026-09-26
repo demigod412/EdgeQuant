@@ -5,6 +5,7 @@ import { sellProbe } from "@/lib/token/probe";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
+import { parseRecent, selectCandidates, type Candidate } from "@/lib/token/discover";
 import { MAX_HOLD_HOURS } from "@/lib/instruments";
 import type { TokenSnapshot } from "@/lib/token/types";
 
@@ -344,5 +345,63 @@ describe("settlement horizons", () => {
 
   it("orders the checkpoints", () => {
     expect([...CHECKPOINT_HOURS].sort((a, b) => a - b)).toEqual(CHECKPOINT_HOURS);
+  });
+});
+
+describe("choosing what to auto-screen", () => {
+  const cand = (over: Partial<Candidate> = {}): Candidate => ({
+    mint: "So11111111111111111111111111111111111111112", symbol: "X", name: "X",
+    liquidityUsd: 50_000, firstPoolAt: new Date("2026-09-26T20:00:00Z"), holderCount: 100, ...over,
+  });
+  const now = new Date("2026-09-26T21:00:00Z");
+  const pick = (cs: Candidate[], extra = {}) => selectCandidates(cs, { now, recentlyScreened: new Set(), ...extra });
+
+  it("takes the deepest liquidity first, so the survival answers carry information", () => {
+    const r = pick([cand({ mint: "A".repeat(32), liquidityUsd: 9_000 }), cand({ mint: "B".repeat(32), liquidityUsd: 90_000 })], { limit: 1 });
+    expect(r.take.map((c) => c.liquidityUsd)).toEqual([90_000]);
+  });
+
+  it("treats unknown liquidity as a skip, never as passing", () => {
+    // A feed that renames a field must cost a filter, not let something through unchecked.
+    const r = pick([cand({ liquidityUsd: null })]);
+    expect(r.take).toHaveLength(0);
+    expect(r.skipped["liquidity unknown"]).toBe(1);
+  });
+
+  it("skips the illiquid, the stale and the recently screened, and says which", () => {
+    const mine = "C".repeat(32);
+    const r = selectCandidates([
+      cand({ mint: "D".repeat(32), liquidityUsd: 100 }),
+      cand({ mint: "E".repeat(32), firstPoolAt: new Date("2026-09-20T00:00:00Z") }),
+      cand({ mint: mine }),
+    ], { now, recentlyScreened: new Set([mine]) });
+    expect(r.take).toHaveLength(0);
+    expect(r.skipped).toEqual({ "too illiquid": 1, "too old": 1, "screened recently": 1 });
+  });
+
+  it("honours the run limit, which is what bounds the RPC bill", () => {
+    const many = Array.from({ length: 30 }, (_, i) => cand({ mint: `m${i}`.padEnd(32, "x") }));
+    const r = pick(many, { limit: 5 });
+    expect(r.take).toHaveLength(5);
+    expect(r.skipped["over the run limit"]).toBe(25);
+  });
+
+  it("keeps a candidate with no first-pool time rather than guessing its age", () => {
+    expect(pick([cand({ firstPoolAt: null })]).take).toHaveLength(1);
+  });
+
+  it("reads the feed defensively and ignores anything that is not a mint", () => {
+    const rows = parseRecent([
+      { id: "So11111111111111111111111111111111111111112", symbol: "SOL", liquidity: 1_000 },
+      { id: "0xdeadbeef" }, { symbol: "no id" }, null, "nonsense",
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].symbol).toBe("SOL");
+    expect(rows[0].liquidityUsd).toBe(1_000);
+  });
+
+  it("survives a feed shape it does not recognise", () => {
+    expect(parseRecent({})).toEqual([]);
+    expect(parseRecent(null)).toEqual([]);
   });
 });

@@ -278,6 +278,11 @@ model TokenScreen {
   /// Interim checks before the final horizon: [{ hours, at, survived, liquidityUsd, failureKind }].
   /// A six-hour hold is judged by what was true at six hours, not by what was true a day later.
   checkpoints Json     @default("[]")
+  /// manual | auto. Automatic screens fill the survival record; they would otherwise bury your own.
+  source      String   @default("manual")
+  /// Removed from the list by you. The outcome still counts towards the record: a survival rate whose
+  /// failures can be deleted is not a record of anything.
+  hiddenAt    DateTime?
 
   @@index([mint, screenedAt])
   @@index([screenedAt])

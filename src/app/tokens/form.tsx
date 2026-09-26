@@ -1,12 +1,27 @@
 "use client";
-import { useActionState } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { screen, type ScreenState } from "./actions";
+import { removeScreen, screen, type ScreenState } from "./actions";
 import { cn } from "@/components/ui";
 
 const input = "focus-ring w-full rounded-lg border hairline bg-black/30 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600";
 const btn = "focus-ring rounded-lg border border-edge/40 px-3 py-1.5 text-sm text-edge hover:bg-edge/10 disabled:opacity-50";
+
+/** Removing one screen. Says what it did, because hiding and deleting are not the same thing. */
+export function RemoveButton({ id }: { id: string }) {
+  const [busy, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  const router = useRouter();
+  if (msg) return <span className="text-[11px] text-slate-500">{msg}</span>;
+  return (
+    <button type="button" disabled={busy}
+      className="focus-ring rounded-md border hairline px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-miss disabled:opacity-50"
+      onClick={() => start(async () => { const r = await removeScreen(id); setMsg(r.message); router.refresh(); })}>
+      {busy ? "Removing…" : "Remove"}
+    </button>
+  );
+}
 
 export function ScreenForm() {
   const [s, act, pending] = useActionState<ScreenState, FormData>(screen, null);

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.7.0 — the record fills itself, and the list can be tidied without editing the record
+
+### Automatic screening
+Twice an hour, screen whatever has just become tradeable. At a handful of hand-typed mints the 200
+settled screens a survival model needs were months away, which meant the grades would never have become
+evidence of anything.
+
+On the source, since it is the part that decides whether the record is worth having: **DexScreener has no
+public new-pairs endpoint.** Its documented feeds are latest token *profiles* and paid *boosts*, both of
+which select for tokens whose promoters spent money — exactly the wrong sample, and it would have biased
+the survival record towards whatever promoted tokens do. Jupiter's recent-tokens feed is ordered by
+**first pool creation**, which is the event that matters: the moment a token becomes tradeable is the
+moment a screen is meaningful. No key, same host as the sell-simulation quotes.
+
+The selection rules are pure and tested: deepest liquidity first, a floor under it, a maximum age, no
+re-screening a mint inside a day, and a per-run cap. Unknown liquidity counts as a skip rather than a
+pass — a feed that renames a field should cost us a filter, not let something through unchecked.
+
+Cost is bounded by two numbers, `TOKEN_DISCOVER_LIMIT` and the cron interval. At the defaults (8 per run,
+twice an hour) that is about 400 screens a day and comfortably inside a free Helius month.
+
+Automatic screens are marked `source: "auto"` and the list shows yours by default, because a few hundred
+rows a day would otherwise bury them. `npm run discover` runs a pass by hand.
+
+### Removing a screen
+Two behaviours, because "delete this mistake" and "tidy my list" are different needs and only one of them
+is safe:
+
+- **Nothing observed yet** — no checkpoint, no settled outcome — the row is deleted outright. A mistyped
+  address, a pool address pasted by accident, a duplicate run: these are not observations and the record
+  loses nothing.
+- **Something has been observed** — the screen is hidden from the list and kept in the record.
+
+That distinction is the point rather than a compromise. A survival rate whose failures can be deleted is
+not a record of anything, and the grades only ever stop being my opinion because every outcome is still
+there. The button says which of the two happened, and the hidden count is shown with a note that those
+screens still count.
+
 ## 0.6.1 — the 24-hour wait was never going to end
 
 - **Fix: nothing scheduled ever settled a token screen.** `settleScreens` was reachable only by running

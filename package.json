@@ -1,6 +1,6 @@
 {
   "name": "edgequant",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -18,7 +18,8 @@
     "screen": "node --env-file=.env --conditions=react-server --import tsx scripts/screen.ts",
     "summary": "node --env-file=.env --conditions=react-server --import tsx scripts/summary.ts",
     "icons": "node scripts/icons.mjs",
-    "diagnose": "node --env-file=.env --conditions=react-server --import tsx scripts/diagnose.ts"
+    "diagnose": "node --env-file=.env --conditions=react-server --import tsx scripts/diagnose.ts",
+    "discover": "node --env-file=.env --conditions=react-server --import tsx scripts/discover.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
