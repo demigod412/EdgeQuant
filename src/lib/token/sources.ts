@@ -169,7 +169,7 @@ export async function readHolders(mint: string, poolAddresses: string[]): Promis
 
 /** Pools, liquidity and volume. No key needed. */
 export async function readPairs(mint: string) {
-  type Pair = { chainId: string; pairAddress: string; dexId?: string; baseToken: { address: string; symbol?: string; name?: string };
+  type Pair = { chainId: string; pairAddress: string; dexId?: string; labels?: string[]; baseToken: { address: string; symbol?: string; name?: string };
     liquidity?: { usd?: number }; fdv?: number; volume?: { h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
   const r = await get<{ pairs?: Pair[] | null }>(`${DEX}/latest/dex/tokens/${mint}`);
   const pairs = (r.pairs ?? []).filter((p) => p.chainId === "solana");
@@ -179,6 +179,9 @@ export async function readPairs(mint: string) {
     poolAddresses: pairs.map((p) => p.pairAddress),
     deepestPair: deepest.pairAddress,
     dexId: deepest.dexId ?? null,
+    // The pool's architecture: "CLMM", "DLMM", "wp", "DYN2" and so on. It decides whether an LP token
+    // exists to be locked at all, which is a different question from whether we can read one.
+    dexLabels: deepest.labels ?? [],
     symbol: deepest.baseToken.symbol ?? null,
     name: deepest.baseToken.name ?? null,
     liquidityUsd: pairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0),
@@ -252,7 +255,7 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
   if (sell.sellNote) errors.push(`sell side refused: ${sell.sellNote}`);
 
   // The three that need indexed history. Each failure is recorded and leaves its check unknown.
-  const lp = await lpLock(pairs?.dexId ?? null, pairs?.deepestPair ?? null)
+  const lp = await lpLock(pairs?.dexId ?? null, pairs?.deepestPair ?? null, pairs?.dexLabels ?? [])
     .catch((e) => { errors.push(`LP lock: ${(e as Error).message}`); return null; });
   // One lookup, purely for the deployer's identity where the chain records no creator.
   const jup = await jupiterToken(mint);
@@ -282,6 +285,7 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
       dexId: pairs?.dexId ?? null,
       // The reason is a sentence when it explains itself and a DEX name when it does not; the old
       // template assumed the latter and produced "not checkable on Raydium did not return an LP mint".
+      lpWithdrawable: lp && "withdrawable" in lp ? lp.withdrawable : null,
       lpUnchecked: lp && "unchecked" in lp
         ? (/\s/.test(lp.unchecked) ? `${lp.unchecked[0].toUpperCase()}${lp.unchecked.slice(1)}.` : `LP lock is not checkable on ${lp.unchecked}.`)
         : null,

@@ -29,7 +29,7 @@ const serwist = new Serwist({
     { matcher: ({ url }) => url.pathname.startsWith("/api/") || url.pathname.startsWith("/settings"), handler: new NetworkOnly() },
     {
       matcher: ({ request, url }) => request.mode === "navigate"
-        && (url.pathname === "/" || /^\/(portfolio|backtest|accuracy|journal|risk|methodology|more|tokens)/.test(url.pathname)),
+        && (url.pathname === "/" || /^\/(signals|portfolio|backtest|accuracy|journal|risk|methodology|more|tokens)/.test(url.pathname)),
       handler: new NetworkFirst({
         cacheName: "pages",
         networkTimeoutSeconds: 8,

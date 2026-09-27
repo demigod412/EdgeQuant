@@ -34,6 +34,11 @@ export interface TokenSnapshot {
   dexId: string | null;
   /** Why the LP check could not run, when it could not. */
   lpUnchecked: string | null;
+  /**
+   * Set when the pool holds liquidity as individual positions rather than a pooled LP token, so there
+   * is no LP to lock. Not an unknown: a statement that this liquidity is withdrawable by its owners.
+   */
+  lpWithdrawable: string | null;
   /** Share of LP tokens burned or held by a lock program, 0..1. */
   lpLockedShare: number | null;
   /** Largest single LP holder's share, 0..1. One wallet holding the pool can empty it. */

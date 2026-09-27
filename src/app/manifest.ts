@@ -17,8 +17,8 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: "/icons/maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
     shortcuts: [
-      { name: "Open calls", url: "/" },
-      { name: "Token screener", url: "/tokens" },
+      { name: "Token screener", url: "/" },
+      { name: "Open calls", url: "/signals" },
       { name: "Record", url: "/accuracy" },
     ],
   };

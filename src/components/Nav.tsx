@@ -5,15 +5,24 @@ import { Activity, BookOpen, Calculator, FlaskConical, LineChart, Menu, Notebook
 import { cn } from "./ui";
 
 const TABS = [
-  { href: "/", label: "Signals", icon: Activity },
+  { href: "/", label: "Screener", icon: ShieldAlert },
+  { href: "/signals", label: "Signals", icon: Activity },
   { href: "/portfolio", label: "Portfolio", icon: PieChart },
-  { href: "/backtest", label: "Backtest", icon: FlaskConical },
   { href: "/accuracy", label: "Record", icon: LineChart },
   { href: "/journal", label: "Journal", icon: NotebookPen },
   { href: "/more", label: "More", icon: Menu },
 ];
-const RAIL = [...TABS.slice(0, 4), { href: "/journal", label: "Journal", icon: NotebookPen }, { href: "/tokens", label: "Token screener", icon: ShieldAlert }, { href: "/risk", label: "Risk sizing", icon: Calculator },
-  { href: "/methodology", label: "Methodology", icon: BookOpen }, { href: "/settings", label: "Settings", icon: Settings }];
+const RAIL = [
+  { href: "/", label: "Token screener", icon: ShieldAlert },
+  { href: "/signals", label: "Signals", icon: Activity },
+  { href: "/portfolio", label: "Portfolio", icon: PieChart },
+  { href: "/backtest", label: "Backtest", icon: FlaskConical },
+  { href: "/accuracy", label: "Record", icon: LineChart },
+  { href: "/journal", label: "Journal", icon: NotebookPen },
+  { href: "/risk", label: "Risk sizing", icon: Calculator },
+  { href: "/methodology", label: "Methodology", icon: BookOpen },
+  { href: "/settings", label: "Settings", icon: Settings },
+];
 const on = (path: string, href: string) => (href === "/" ? path === "/" : path.startsWith(href));
 
 export function BottomTabs() {

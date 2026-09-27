@@ -66,7 +66,10 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   else add("transferRules", "Transfer rules", "pass", "No transfer fee and no transfer hook.");
 
   // ---- 4. LP locked or burned --------------------------------------------------------------------
-  if (t.lpLockedShare == null) out.push(unknown("lpLocked", "Liquidity locked", t.lpUnchecked ?? "Could not read the LP holders.", true));
+  // A pool with no LP token cannot have a locked one. That is an answer, not a gap, so it is a warning
+  // about withdrawable liquidity rather than a critical check that failed to run.
+  if (t.lpWithdrawable) add("lpLocked", "Liquidity locked", "warn", t.lpWithdrawable);
+  else if (t.lpLockedShare == null) out.push(unknown("lpLocked", "Liquidity locked", t.lpUnchecked ?? "The LP holders could not be read, so whether the liquidity can be withdrawn is unknown.", true));
   else if (t.lpLockedShare >= LIMITS.minLpLocked) add("lpLocked", "Liquidity locked", "pass", `${pct(t.lpLockedShare)} of LP burned or locked.`, true);
   else if (t.lpTopHolderShare != null && t.lpTopHolderShare > LIMITS.maxLpTopHolder)
     add("lpLocked", "Liquidity locked", "fail", `Only ${pct(t.lpLockedShare)} of LP is locked and one wallet holds ${pct(t.lpTopHolderShare)} of it — the pool can be withdrawn, leaving your tokens unsellable at any price.`, true);

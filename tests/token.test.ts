@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
+import { rateEntry, byClearance } from "@/lib/token/rating";
 import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
@@ -17,7 +18,7 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   mintAuthority: null, mintAuthorityRenounced: true,
   freezeAuthority: null, freezeAuthorityRenounced: true,
   transferFeeBps: 0, hasTransferHook: false,
-  liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpLockedShare: 1, lpTopHolderShare: 0,
+  liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpWithdrawable: null, lpLockedShare: 1, lpTopHolderShare: 0,
   top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200, concentrationUnchecked: null,
   deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3, deployerUnchecked: null,
   deployerHoldShare: 0, deployerAttributedMints: null, deployerIdentifiedBy: "creator", launchpad: null,
@@ -587,5 +588,85 @@ describe("the record counts tokens, not repeated screens of the same token", () 
     expect(SURVIVAL_MIN_SETTLED).toBe(200);
     // Below the threshold there is no number at all, whatever the row count says.
     expect(survivalProbability([], { intercept: 0, weights: {}, n: 199, horizonHours: 24 })).toBeNull();
+  });
+});
+
+describe("the strong / medium / weak rating", () => {
+  const rate = (over: Partial<TokenSnapshot> = {}) => {
+    const t = clean({ sellProbeUsd: 500, liquidityUsd: 500 * 60, sellQuote: { probeIn: 500e6, probeOut: 495e6 }, sellPriceImpact: 0.01, ...over });
+    const checks = runChecks(t);
+    return rateEntry(checks, gradeScreen(checks), t);
+  };
+
+  it("rates a fully checked, cheap-to-exit token strong", () => {
+    const r = rate();
+    expect(r.rating).toBe("strong");
+    expect(r.holdingBack).toEqual([]);
+    // Even at its best it must not imply anything about price.
+    expect(r.verdict).toMatch(/says nothing about where the price goes/);
+  });
+
+  it("never rates strong while a critical check is unknown", () => {
+    // This is the whole point: unknown is not fine, and a tidy score must not paper over it.
+    const r = rate({ lpLockedShare: null, lpUnchecked: "LP holders could not be read" });
+    expect(r.rating).toBe("weak");
+    expect(r.verdict).toMatch(/Unknown is not the same as fine/);
+    expect(r.wouldRaise.join(" ")).toMatch(/re-screen/);
+  });
+
+  it("drops to avoid on a disqualifying finding and refuses to be tuned around", () => {
+    const r = rate({ mintAuthorityRenounced: false, mintAuthority: "someone" });
+    expect(r.rating).toBe("avoid");
+    expect(r.verdict).toMatch(/Do not buy/);
+    expect(r.wouldRaise.join(" ")).toMatch(/not a threshold to be tuned around/);
+  });
+
+  it("rates on the exit at YOUR size, not the token in the abstract", () => {
+    // Same token, same checks: only the position size differs. A pool 3x your position is not the same
+    // trade as one 60x it, and no check other than the sell simulation notices.
+    const big = rate({ sellProbeUsd: 10_000, liquidityUsd: 30_000 });
+    expect(big.rating).toBe("weak");
+    expect(big.depthMultiple).toBeCloseTo(3, 1);
+    expect(big.holdingBack.join(" ")).toMatch(/you are a large part of the market/);
+    expect(big.wouldRaise.join(" ")).toMatch(/A position nearer \$2000/);
+  });
+
+  it("calls an expensive exit out as a cost you pay twice", () => {
+    const r = rate({ sellQuote: { probeIn: 500e6, probeOut: 440e6 } });
+    expect(r.rating).toBe("weak");
+    expect(r.holdingBack.join(" ")).toMatch(/Getting out costs 12\.0%/);
+  });
+
+  it("treats a missing sell quote as the most important gap", () => {
+    const r = rate({ sellQuote: null, sellPriceImpact: null });
+    expect(r.rating).toBe("weak");
+    expect(r.holdingBack.join(" ")).toMatch(/exit is unproven/);
+  });
+
+  it("ranks by clearance then cheaper exit, and never by anything resembling upside", () => {
+    const rows = [
+      { rating: "medium" as const, exitCost: 0.01 },
+      { rating: "strong" as const, exitCost: 0.02 },
+      { rating: "strong" as const, exitCost: 0.005 },
+      { rating: "avoid" as const, exitCost: 0.001 },
+    ];
+    expect([...rows].sort(byClearance).map((r) => `${r.rating}:${r.exitCost}`))
+      .toEqual(["strong:0.005", "strong:0.02", "medium:0.01", "avoid:0.001"]);
+  });
+});
+
+describe("liquidity that cannot be locked, versus liquidity we failed to check", () => {
+  it("warns that concentrated liquidity is withdrawable rather than reporting unknown", () => {
+    // "LP lock is not checkable on orca" implied a gap in our tooling. There is no LP token in a
+    // whirlpool at all, and the useful statement is that each position owner can pull their share.
+    const c = find(clean({ lpLockedShare: null, lpWithdrawable: "This is a orca WP pool: liquidity is held as individual positions." }), "lpLocked");
+    expect(c.verdict).toBe("warn");
+    expect(c.detail).toMatch(/individual positions/);
+  });
+
+  it("still reports unknown when the pool type is one we have not implemented", () => {
+    const c = find(clean({ lpLockedShare: null, lpWithdrawable: null, lpUnchecked: "LP lock is not implemented for meteora dyn2 pools" }), "lpLocked");
+    expect(c.verdict).toBe("unknown");
+    expect(c.hard).toBe(true);
   });
 });

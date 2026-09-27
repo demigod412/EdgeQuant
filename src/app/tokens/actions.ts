@@ -29,11 +29,11 @@ export async function removeScreen(id: string): Promise<{ ok: boolean; message: 
   const what = row.symbol ?? "the screen";
   if (observed) {
     await prisma.tokenScreen.update({ where: { id }, data: { hiddenAt: new Date() } });
-    revalidatePath("/tokens");
+    revalidatePath("/");
     return { ok: true, message: `${what} hidden. Its outcome stays in the record — that is what makes the grades mean anything.` };
   }
   await prisma.tokenScreen.delete({ where: { id } });
-  revalidatePath("/tokens");
+  revalidatePath("/");
   return { ok: true, message: `${what} deleted. Nothing had been observed from it yet, so the record is unaffected.` };
 }
 

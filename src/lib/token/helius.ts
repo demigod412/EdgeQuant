@@ -77,11 +77,22 @@ async function getJson<T>(url: string): Promise<T | null> {
  * the program and cannot be withdrawn by the deployer, which is a pass rather than an unknown. Anything
  * else returns null and is reported as unchecked, naming the DEX, instead of being guessed at.
  */
-export async function lpLock(dexId: string | null, pairAddress: string | null): Promise<
-  { lockedShare: number; topHolderShare: number; note: string } | { unchecked: string } | null
+/**
+ * Pool architectures that hold liquidity as individual positions rather than as a pooled LP token.
+ *
+ * Orca Whirlpools, Raydium CLMM and Meteora DLMM all work this way. There is no LP token to burn or
+ * lock, so "is the LP locked" has no answer — and reporting "not checkable on orca" implied a gap in our
+ * tooling when it is a property of the pool. The honest statement is the opposite and more useful: this
+ * liquidity CAN be withdrawn, position by position, by whoever owns each position.
+ */
+const CONCENTRATED = new Set(["clmm", "dlmm", "wp", "whirlpool"]);
+
+export async function lpLock(dexId: string | null, pairAddress: string | null, labels: string[] = []): Promise<
+  { lockedShare: number; topHolderShare: number; note: string } | { withdrawable: string } | { unchecked: string } | null
 > {
   if (!pairAddress) return null;
   const dex = (dexId ?? "").toLowerCase();
+  const kinds = labels.map((l) => l.toLowerCase());
 
   // Liquidity on the bonding curve is program-owned: there is no LP token for anyone to pull.
   if (dex.includes("pumpfun") || dex === "pump" || dex.includes("moonshot")) {
@@ -100,6 +111,13 @@ export async function lpLock(dexId: string | null, pairAddress: string | null): 
    *
    * Seeds and program id verified against pump-fun/pump-public-docs and the PumpSwap IDL.
    */
+  // Concentrated liquidity: no LP token exists, and each position owner can pull their own share.
+  const conc = kinds.find((k) => CONCENTRATED.has(k));
+  if (conc) {
+    const where = dex ? `${dex} ${conc.toUpperCase()}` : conc.toUpperCase();
+    return { withdrawable: `This is a ${where} pool: liquidity is held as individual positions, not as a pooled LP token, so there is nothing to burn or lock. Each position's owner can withdraw their share at any time.` };
+  }
+
   if (isPumpSwap(dex)) {
     const lp = pumpswapLpMint(pairAddress);
     if (!lp) return { unchecked: "this pool address is not a valid public key" };
@@ -115,19 +133,24 @@ export async function lpLock(dexId: string | null, pairAddress: string | null): 
     return measureLpMint(lp);
   }
 
-  if (!dex.startsWith("raydium")) return { unchecked: dex || "this DEX" };
+  if (!dex.startsWith("raydium")) {
+    // Named precisely, so it is clear what is missing rather than just that something is.
+    const what = [dex || "an unrecognised DEX", ...kinds].filter(Boolean).join(" ");
+    return { unchecked: `LP lock is not implemented for ${what} pools, so whether the liquidity can be withdrawn is unknown` };
+  }
 
   const pool = await getJson<{ success?: boolean; data?: { type?: string; lpMint?: { address?: string } }[] }>(
     `https://api-v3.raydium.io/pools/info/ids?ids=${pairAddress}`,
   );
   const lpMint = pool?.data?.[0]?.lpMint?.address;
   if (!lpMint) {
-    // A concentrated-liquidity pool has no LP token at all: liquidity sits in individual positions held
-    // as NFTs, each withdrawable by its owner. "No LP mint returned" was true but told you nothing.
+    // Raydium's own type field is the second chance at this: a concentrated pool reaching here means
+    // DexScreener carried no label for it.
     const kind = (pool?.data?.[0]?.type ?? "").toLowerCase();
-    return { unchecked: kind.includes("concentrat")
-      ? "this is a concentrated-liquidity pool, which has no LP token — liquidity sits in separate positions that each owner can withdraw"
-      : "Raydium returned no LP mint for this pool" };
+    if (kind.includes("concentrat")) {
+      return { withdrawable: "This is a Raydium concentrated-liquidity pool: liquidity is held as individual positions, not as a pooled LP token, so there is nothing to burn or lock. Each position's owner can withdraw their share at any time." };
+    }
+    return { unchecked: `Raydium returned no LP mint for this ${kind || "pool"}, so whether the liquidity can be withdrawn is unknown` };
   }
   return measureLpMint(lpMint);
 }
@@ -143,7 +166,7 @@ async function measureLpMint(lpMint: string): Promise<
   await sleep(SPACING_MS);
   const largest = await rpc<{ value?: { address: string; uiAmount: number | null }[] }>("getTokenLargestAccounts", [lpMint]);
   const rows = largest?.value ?? [];
-  if (!rows.length) return null;
+  if (!rows.length) return { unchecked: "the LP mint has no holders on record, so how much of it is burned cannot be established" };
 
   // A burned LP supply shows up as holders summing to less than the mint's recorded supply, or as a
   // balance parked at an incinerator. Both count as burned.

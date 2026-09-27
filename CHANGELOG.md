@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.9.0 — a strong/medium/weak verdict, and the screener as the landing page
+
+### "Not checkable on orca" was the wrong answer to the wrong question
+Orca Whirlpools, Raydium CLMM and Meteora DLMM hold liquidity as **individual positions, not as a pooled
+LP token**. There is no LP to burn or lock, so asking whether it is locked has no answer — and saying
+"not checkable" implied a gap in our tooling when it is a property of the pool.
+
+DexScreener carries the architecture in each pair's `labels` (`wp`, `CLMM`, `DLMM`, `DYN2`), so the pool
+is now classified rather than shrugged at, and the honest statement is both truer and more useful: *this
+liquidity can be withdrawn, position by position, by whoever owns each position.* That is a warning about
+withdrawable liquidity, not a critical check that failed to run — which also means coverage rises and the
+score starts discriminating. Raydium's own `type` field is a second chance at the same call.
+
+Pool types that genuinely are not implemented now name themselves ("LP lock is not implemented for
+meteora dyn2 pools") instead of reporting the DEX name as though it were the reason. And the sentence
+"LP lock is not checkable on Raydium did not return an LP mint for this pool" is gone.
+
+### Strong, medium, weak
+A single verdict per screen, in `src/lib/token/rating.ts`, with what is holding it back and what would
+change it — including the things you control.
+
+It rates **how completely the avoidable risk has been ruled out, and how cheap the exit is at the size
+you trade**. It is not a ranking of upside: no check contains any information about where a price goes,
+and every verdict says so in its own words, because a three-level rating is exactly the sort of thing
+that gets read as a recommendation once the reasoning scrolls off the screen.
+
+- **avoid** — a disqualifying check failed. `wouldRaise` says "nothing", because a hard finding is not a
+  threshold to be tuned around.
+- **weak** — a critical check could not be run, something is failing, the exit is expensive, or the pool
+  is thin relative to your position. Unknown is not the same as fine.
+- **medium** — nothing disqualifying and nothing failing, with the remaining reservations listed.
+- **strong** — every check ran, none is wrong, and the exit is cheap in a pool far deeper than your
+  position. The most the tool can say.
+
+Two of the inputs depend on **your position size**, which is why five tokens with identical scores were
+never equivalent: a pool 3× your position is a different trade from one 60× it, and only the sell
+simulation notices. Where a position is too large for a pool, the rating says what size would not be.
+
+### The screener is the landing page
+`/` is the screener; the calls moved to `/signals`; `/tokens` redirects (307, not 308 — a permanent
+redirect gets cached hard by installed PWAs). Navigation, manifest shortcuts and the service-worker
+matcher all follow.
+
+**New: a "Best risk clearance" shortlist** on the landing page — the best-cleared tokens screened in the
+last 24 hours, one row per mint, ranked by rating and then by cheaper exit. Deliberately **not** ranked by
+liquidity, volume or price change: those look like upside and are not, and sorting on them would turn a
+risk list into an implied buy list. Each row shows the size it was rated at, because an automatic screen
+uses $50 and a token that exits cheaply at $50 may not at yours.
+
 ## 0.8.2 — the record counts tokens, not repeated screens of the same token
 
 Re-screening every four hours means one mint contributes many rows, and the record was treating those as
