@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.1 — measuring a concentrated pool instead of shrugging at it
+
+- **The shortlist's mint addresses are copyable.** A shortlist you have to leave in order to act on is
+  half a feature.
+- **Orca Whirlpool liquidity is now measured position by position.** "There is no LP token to lock" was
+  true but incomplete: the risk an LP lock protects against is someone withdrawing the liquidity under
+  you, and in a concentrated pool that is still measurable. One `getProgramAccounts` call, filtered to
+  the pool and sliced to the liquidity field alone, gives every position's size — so a pool now reports
+  how many positions hold it and what share sits in the largest.
+
+  One position holding more than half the pool now **fails the check outright**, because one owner
+  removing most of the market you would be selling into is exactly what an LP lock exists to prevent.
+
+  The asymmetry is deliberate and stated in the wording: several positions can share one owner, so a
+  high share is trustworthy evidence that one actor could pull the pool, while a low share is **not**
+  evidence that nobody can. A well-spread pool therefore warns; it never passes.
+
+- **Only verified layouts are decoded.** The offsets come from the Whirlpool program's own source
+  (`Position` is 216 bytes, `whirlpool` at 8, `liquidity` at 72). Raydium CLMM and Meteora DLMM are
+  absent from that table rather than guessed at — an unverified decoder produces numbers instead of
+  errors, and a confident wrong number is worse than an honest unknown.
+
 ## 0.9.0 — a strong/medium/weak verdict, and the screener as the landing page
 
 ### "Not checkable on orca" was the wrong answer to the wrong question

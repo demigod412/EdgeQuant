@@ -286,6 +286,8 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
       // The reason is a sentence when it explains itself and a DEX name when it does not; the old
       // template assumed the latter and produced "not checkable on Raydium did not return an LP mint".
       lpWithdrawable: lp && "withdrawable" in lp ? lp.withdrawable : null,
+      lpPositions: lp && "withdrawable" in lp ? lp.positions ?? null : null,
+      lpTopPositionShare: lp && "withdrawable" in lp ? lp.topPositionShare ?? null : null,
       lpUnchecked: lp && "unchecked" in lp
         ? (/\s/.test(lp.unchecked) ? `${lp.unchecked[0].toUpperCase()}${lp.unchecked.slice(1)}.` : `LP lock is not checkable on ${lp.unchecked}.`)
         : null,

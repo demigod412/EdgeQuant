@@ -87,8 +87,68 @@ async function getJson<T>(url: string): Promise<T | null> {
  */
 const CONCENTRATED = new Set(["clmm", "dlmm", "wp", "whirlpool"]);
 
+/*
+ * Where a concentrated pool's liquidity CAN be measured, position by position.
+ *
+ * "There is no LP token to lock" is true but incomplete. The risk an LP lock protects against is that
+ * someone withdraws the liquidity under you, and in a concentrated pool that risk is still measurable:
+ * if one position holds most of the pool, whoever owns it can pull most of the pool.
+ *
+ * Only layouts verified against the program's own source go in this table. An unverified decoder would
+ * produce numbers rather than errors, and a confident wrong number is worse than an honest unknown —
+ * which is why Raydium CLMM and Meteora DLMM are absent rather than guessed at.
+ */
+const POSITION_LAYOUTS: Record<string, { program: string; size: number; poolOffset: number; liqOffset: number; name: string }> = {
+  // orca-so/whirlpools, programs/whirlpool/src/state/position.rs: LEN = 8 + 136 + 72 = 216, with
+  // whirlpool at 8 and liquidity (u128) at 72.
+  wp: { program: "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc", size: 216, poolOffset: 8, liqOffset: 72, name: "Orca Whirlpool" },
+};
+
+/** Little-endian u128 out of a 16-byte buffer. */
+function readU128LE(buf: Buffer): bigint {
+  return buf.readBigUInt64LE(0) + (buf.readBigUInt64LE(8) << 64n);
+}
+
+/**
+ * How much of a concentrated pool's liquidity sits in its single largest position.
+ *
+ * A LOWER bound on concentration, and the asymmetry matters: several positions can share one owner, so a
+ * high number is trustworthy evidence that one actor could pull the pool, while a low number is NOT
+ * evidence that no one can. The check wording says so rather than letting a reassuring number stand
+ * unqualified.
+ */
+async function positionSpread(label: string, pool: string): Promise<{ positions: number; topShare: number; name: string } | null> {
+  const L = POSITION_LAYOUTS[label];
+  if (!L || !RPC()) return null;
+  type Accounts = { account?: { data?: [string, string] | string } }[];
+  const res = await rpc<Accounts>("getProgramAccounts", [L.program, {
+    encoding: "base64",
+    // Only the liquidity field comes back, so the response stays small however many positions exist.
+    dataSlice: { offset: L.liqOffset, length: 16 },
+    filters: [{ dataSize: L.size }, { memcmp: { offset: L.poolOffset, bytes: pool } }],
+  }]).catch(() => null);
+  if (!Array.isArray(res) || !res.length) return null;
+
+  let total = 0n, top = 0n, counted = 0;
+  for (const row of res) {
+    const raw = row?.account?.data;
+    const b64 = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof b64 !== "string") continue;
+    const buf = Buffer.from(b64, "base64");
+    if (buf.length < 16) continue;
+    const liq = readU128LE(buf);
+    total += liq; counted++;
+    if (liq > top) top = liq;
+  }
+  // Positions all at zero liquidity are closed ones; there is nothing to measure and nothing to claim.
+  if (!counted || total === 0n) return null;
+  return { positions: counted, topShare: Number((top * 10_000n) / total) / 10_000, name: L.name };
+}
+
 export async function lpLock(dexId: string | null, pairAddress: string | null, labels: string[] = []): Promise<
-  { lockedShare: number; topHolderShare: number; note: string } | { withdrawable: string } | { unchecked: string } | null
+  { lockedShare: number; topHolderShare: number; note: string }
+  | { withdrawable: string; positions?: number; topPositionShare?: number }
+  | { unchecked: string } | null
 > {
   if (!pairAddress) return null;
   const dex = (dexId ?? "").toLowerCase();
@@ -115,7 +175,17 @@ export async function lpLock(dexId: string | null, pairAddress: string | null, l
   const conc = kinds.find((k) => CONCENTRATED.has(k));
   if (conc) {
     const where = dex ? `${dex} ${conc.toUpperCase()}` : conc.toUpperCase();
-    return { withdrawable: `This is a ${where} pool: liquidity is held as individual positions, not as a pooled LP token, so there is nothing to burn or lock. Each position's owner can withdraw their share at any time.` };
+    const base = `This is a ${where} pool: liquidity is held as individual positions, not as a pooled LP token, so there is nothing to burn or lock.`;
+    await sleep(SPACING_MS);
+    const spread = await positionSpread(conc, pairAddress);
+    if (!spread) {
+      return { withdrawable: `${base} Each position's owner can withdraw their share at any time, and how that liquidity is split between positions could not be measured for this pool type.` };
+    }
+    return {
+      withdrawable: `${base} It is spread across ${spread.positions} position${spread.positions === 1 ? "" : "s"}, the largest holding ${(spread.topShare * 100).toFixed(1)}% of the pool's liquidity, and that position's owner can withdraw it at any time.`,
+      positions: spread.positions,
+      topPositionShare: spread.topShare,
+    };
   }
 
   if (isPumpSwap(dex)) {

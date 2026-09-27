@@ -18,7 +18,7 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   mintAuthority: null, mintAuthorityRenounced: true,
   freezeAuthority: null, freezeAuthorityRenounced: true,
   transferFeeBps: 0, hasTransferHook: false,
-  liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpWithdrawable: null, lpLockedShare: 1, lpTopHolderShare: 0,
+  liquidityUsd: 120_000, dexId: "raydium", lpUnchecked: null, lpWithdrawable: null, lpPositions: null, lpTopPositionShare: null, lpLockedShare: 1, lpTopHolderShare: 0,
   top10Share: 0.18, topHolderShare: 0.05, holderCount: 4200, concentrationUnchecked: null,
   deployer: "dep", deployerPriorMints: 3, deployerPriorRugs: 0, deployerChecked: 3, deployerUnchecked: null,
   deployerHoldShare: 0, deployerAttributedMints: null, deployerIdentifiedBy: "creator", launchpad: null,
@@ -668,5 +668,48 @@ describe("liquidity that cannot be locked, versus liquidity we failed to check",
     const c = find(clean({ lpLockedShare: null, lpWithdrawable: null, lpUnchecked: "LP lock is not implemented for meteora dyn2 pools" }), "lpLocked");
     expect(c.verdict).toBe("unknown");
     expect(c.hard).toBe(true);
+  });
+});
+
+describe("concentrated pools, measured rather than shrugged at", () => {
+  const conc = (over: Partial<TokenSnapshot> = {}) => clean({
+    lpLockedShare: null,
+    lpWithdrawable: "This is a orca WP pool: liquidity is held as individual positions, not as a pooled LP token, so there is nothing to burn or lock.",
+    ...over,
+  });
+
+  it("fails when one position holds most of the pool", () => {
+    // Exactly the risk an LP lock exists to prevent, arriving by a different route.
+    const c = find(conc({ lpPositions: 12, lpTopPositionShare: 0.71 }), "lpLocked");
+    expect(c.verdict).toBe("fail");
+    expect(c.hard).toBe(true);
+    expect(c.detail).toMatch(/71\.0% of the pool/);
+  });
+
+  it("warns, and says the figure is a floor, when one position is merely large", () => {
+    const c = find(conc({ lpPositions: 30, lpTopPositionShare: 0.31 }), "lpLocked");
+    expect(c.verdict).toBe("warn");
+    expect(c.detail).toMatch(/floor on how concentrated/);
+  });
+
+  it("refuses to call a well-spread pool safe, because positions can share an owner", () => {
+    const c = find(conc({ lpPositions: 400, lpTopPositionShare: 0.04 }), "lpLocked");
+    expect(c.verdict).toBe("warn");
+    expect(c.verdict).not.toBe("pass");
+    expect(c.detail).toMatch(/not evidence that nobody can withdraw/);
+  });
+
+  it("says the split could not be measured when the pool type has no verified layout", () => {
+    const c = find(conc({ lpPositions: null, lpTopPositionShare: null }), "lpLocked");
+    expect(c.verdict).toBe("warn");
+    expect(c.detail).toMatch(/individual positions/);
+  });
+
+  it("keeps a measured concentrated pool out of a strong rating", () => {
+    const t = conc({ lpPositions: 400, lpTopPositionShare: 0.04, sellProbeUsd: 500, liquidityUsd: 500 * 80 });
+    const checks = runChecks(t);
+    const r = rateEntry(checks, gradeScreen(checks), t);
+    expect(r.rating).not.toBe("strong");
+    expect(r.holdingBack.join(" ")).toMatch(/Liquidity locked/);
   });
 });

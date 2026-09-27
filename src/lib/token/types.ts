@@ -39,6 +39,15 @@ export interface TokenSnapshot {
    * is no LP to lock. Not an unknown: a statement that this liquidity is withdrawable by its owners.
    */
   lpWithdrawable: string | null;
+  /** Positions the pool's liquidity is split across, for a concentrated pool. */
+  lpPositions: number | null;
+  /**
+   * Share of a concentrated pool's liquidity in its single largest position.
+   *
+   * A LOWER bound on concentration: positions can share an owner, so a high value is good evidence that
+   * one actor could pull the pool, while a low value is not evidence that nobody can.
+   */
+  lpTopPositionShare: number | null;
   /** Share of LP tokens burned or held by a lock program, 0..1. */
   lpLockedShare: number | null;
   /** Largest single LP holder's share, 0..1. One wallet holding the pool can empty it. */

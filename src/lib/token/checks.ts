@@ -14,6 +14,13 @@ export const LIMITS = {
   minLpLocked: 0.9,
   /** One LP holder above this can empty the pool alone. */
   maxLpTopHolder: 0.2,
+  /**
+   * One position holding this much of a concentrated pool means one owner can pull most of it. The
+   * measurement is a lower bound on concentration, so a breach is trustworthy; passing it is not a
+   * clean bill of health, and the wording says so.
+   */
+  maxLpTopPosition: 0.5,
+  warnLpTopPosition: 0.2,
   /** Top ten holders above this and a handful of wallets decide the price. */
   maxTop10: 0.35,
   warnTop10: 0.25,
@@ -66,9 +73,25 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   else add("transferRules", "Transfer rules", "pass", "No transfer fee and no transfer hook.");
 
   // ---- 4. LP locked or burned --------------------------------------------------------------------
-  // A pool with no LP token cannot have a locked one. That is an answer, not a gap, so it is a warning
-  // about withdrawable liquidity rather than a critical check that failed to run.
-  if (t.lpWithdrawable) add("lpLocked", "Liquidity locked", "warn", t.lpWithdrawable);
+  /*
+   * A pool with no LP token cannot have a locked one: an answer, not a gap, so it is a warning about
+   * withdrawable liquidity rather than a critical check that failed to run.
+   *
+   * Where the split between positions could be measured, it decides the severity. One position holding
+   * most of the pool is the same risk an LP lock exists to prevent, so it fails outright — but the
+   * measurement is a floor on concentration, since positions can share an owner, and a low figure is
+   * therefore never reported as safety.
+   */
+  if (t.lpWithdrawable) {
+    const top = t.lpTopPositionShare;
+    if (top != null && top > LIMITS.maxLpTopPosition)
+      add("lpLocked", "Liquidity locked", "fail", `${t.lpWithdrawable} One owner controlling ${pct(top)} of the pool can remove most of the market you would be selling into.`, true);
+    else if (top != null && top > LIMITS.warnLpTopPosition)
+      add("lpLocked", "Liquidity locked", "warn", `${t.lpWithdrawable} Positions can share an owner, so that share is a floor on how concentrated this really is.`);
+    else if (top != null)
+      add("lpLocked", "Liquidity locked", "warn", `${t.lpWithdrawable} No single position dominates — though positions can share an owner, so this is not evidence that nobody can withdraw a large share.`);
+    else add("lpLocked", "Liquidity locked", "warn", t.lpWithdrawable);
+  }
   else if (t.lpLockedShare == null) out.push(unknown("lpLocked", "Liquidity locked", t.lpUnchecked ?? "The LP holders could not be read, so whether the liquidity can be withdrawn is unknown.", true));
   else if (t.lpLockedShare >= LIMITS.minLpLocked) add("lpLocked", "Liquidity locked", "pass", `${pct(t.lpLockedShare)} of LP burned or locked.`, true);
   else if (t.lpTopHolderShare != null && t.lpTopHolderShare > LIMITS.maxLpTopHolder)

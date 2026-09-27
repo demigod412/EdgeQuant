@@ -115,6 +115,8 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                     <span className={cn("mr-2 inline-flex rounded-full border px-2 py-0.5 text-[10px] capitalize", RATING_STYLE[rating.rating])}>{rating.rating}</span>
                     <span className="text-sm text-slate-200">{row.symbol ?? "unknown"}</span>
                     <span className="num ml-2 text-[11px] text-slate-500">{row.mint.slice(0, 4)}…{row.mint.slice(-4)}</span>
+                    {/* Copyable here too: a shortlist you have to leave in order to act on is half a feature. */}
+                    <span className="ml-2 inline-flex align-middle"><CopyButton text={row.mint} label="Copy" /></span>
                   </span>
                   <span className="num text-[11px] text-slate-500">
                     exit {rating.exitCost != null ? pct(rating.exitCost) : "—"}
