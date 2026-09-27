@@ -170,7 +170,7 @@ export async function readHolders(mint: string, poolAddresses: string[]): Promis
 /** Pools, liquidity and volume. No key needed. */
 export async function readPairs(mint: string) {
   type Pair = { chainId: string; pairAddress: string; dexId?: string; labels?: string[]; baseToken: { address: string; symbol?: string; name?: string };
-    liquidity?: { usd?: number }; fdv?: number; volume?: { h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
+    priceUsd?: string; liquidity?: { usd?: number }; fdv?: number; volume?: { h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
   const r = await get<{ pairs?: Pair[] | null }>(`${DEX}/latest/dex/tokens/${mint}`);
   const pairs = (r.pairs ?? []).filter((p) => p.chainId === "solana");
   if (!pairs.length) return null;
@@ -182,6 +182,8 @@ export async function readPairs(mint: string) {
     // The pool's architecture: "CLMM", "DLMM", "wp", "DYN2" and so on. It decides whether an LP token
     // exists to be locked at all, which is a different question from whether we can read one.
     dexLabels: deepest.labels ?? [],
+    // Only ever used to enforce a stop the user set. Nothing here forecasts a price.
+    priceUsd: deepest.priceUsd ? Number(deepest.priceUsd) : null,
     symbol: deepest.baseToken.symbol ?? null,
     name: deepest.baseToken.name ?? null,
     liquidityUsd: pairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0),

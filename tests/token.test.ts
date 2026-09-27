@@ -6,6 +6,7 @@ import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
+import { shouldSend, watchAlerts, watchMessage, type Observation } from "@/lib/token/watchRules";
 import { POSITION_LAYOUTS, decodeLock, decodeSpread, lockSlice, spreadSlice, readU128LE, plausible, MAX_PLAUSIBLE_LIQUIDITY } from "@/lib/token/positionLayouts";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
 import { parseRecent, selectCandidates, type Candidate } from "@/lib/token/discover";
@@ -796,5 +797,71 @@ describe("decoding position accounts", () => {
     // Positions allocate more per-bin data as they grow, so a dataSize filter cannot target them and
     // no verbatim struct was available to compute offsets from. Absent is the honest state.
     expect(POSITION_LAYOUTS.dlmm).toBeUndefined();
+  });
+});
+
+describe("watching a holding", () => {
+  const base = { liquidityUsd: 100_000, exitCost: 0.02, topHolderShare: 0.08, priceUsd: 1 };
+  const obs = (over: Partial<Observation> = {}): Observation =>
+    ({ liquidityUsd: 100_000, exitCost: 0.02, sellQuoted: true, topHolderShare: 0.08, priceUsd: 1, ...over });
+  const keys = (o: Observation, opts = {}) => watchAlerts(o, base, opts).map((a) => a.key);
+
+  it("says nothing when nothing has changed", () => {
+    // Silence is the default. A warning system that fires on noise gets ignored, which makes it worse
+    // than no warning system.
+    expect(watchAlerts(obs(), base)).toEqual([]);
+  });
+
+  it("raises the two ways out first, and marks them critical", () => {
+    expect(keys(obs({ sellQuoted: false }))).toContain("exit-blocked");
+    expect(watchAlerts(obs({ sellQuoted: false }), base)[0].severity).toBe("critical");
+    expect(keys(obs({ liquidityUsd: 400 }))).toContain("liquidity-gone");
+  });
+
+  it("catches a draining pool against entry, not against the last check", () => {
+    // Against the previous probe a slow drain never trips a threshold; against entry it does.
+    expect(keys(obs({ liquidityUsd: 60_000 }))).toContain("liquidity-drop");
+    expect(keys(obs({ liquidityUsd: 80_000 }))).not.toContain("liquidity-drop");
+  });
+
+  it("does not raise the alarm because a request failed", () => {
+    // An API that did not answer is not a pool that drained.
+    expect(watchAlerts(obs({ liquidityUsd: null, exitCost: null }), base)).toEqual([]);
+  });
+
+  it("flags an exit that got materially worse, and one that is simply bad", () => {
+    expect(keys(obs({ exitCost: 0.14 }))).toContain("exit-worse");
+    expect(keys(obs({ exitCost: 0.4 }))).toContain("exit-costly");
+    expect(keys(obs({ exitCost: 0.05 }))).toEqual([]);
+  });
+
+  it("only mentions price when you set a stop, and never otherwise", () => {
+    // The app has no opinion on price. This trigger exists because the user supplied a number.
+    expect(keys(obs({ priceUsd: 0.4 }))).toEqual([]);
+    expect(keys(obs({ priceUsd: 0.4 }), { stopLossPct: 0.5 })).toContain("stop-loss");
+    expect(keys(obs({ priceUsd: 0.7 }), { stopLossPct: 0.5 })).not.toContain("stop-loss");
+  });
+
+  it("does not repeat the same warning every few minutes", () => {
+    const a = { key: "liquidity-drop", severity: "critical" as const, line: "x" };
+    const now = new Date("2026-09-27T12:00:00Z");
+    const justSent = { key: "liquidity-drop", at: new Date("2026-09-27T11:30:00Z"), severity: "critical" as const };
+    expect(shouldSend(a, justSent, now)).toBe(false);
+    expect(shouldSend(a, { ...justSent, at: new Date("2026-09-27T05:00:00Z") }, now)).toBe(true);
+    expect(shouldSend(a, { key: null, at: null }, now)).toBe(true);
+  });
+
+  it("always sends an escalation from warning to critical", () => {
+    const worse = { key: "liquidity-drop", severity: "critical" as const, line: "x" };
+    const now = new Date("2026-09-27T12:00:00Z");
+    const sentMildly = { key: "liquidity-drop", at: new Date("2026-09-27T11:59:00Z"), severity: "warning" as const };
+    expect(shouldSend(worse, sentMildly, now)).toBe(true);
+  });
+
+  it("leads the message with whether to act", () => {
+    const m = watchMessage({ symbol: "WIF", mint: "abc", sizeUsd: 500, alerts: watchAlerts(obs({ sellQuoted: false }), base) });
+    expect(m).toMatch(/Act now/);
+    expect(m).toMatch(/\$500 position/);
+    expect(m).toContain("abc");
   });
 });

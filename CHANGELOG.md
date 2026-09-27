@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.10.0 — it watches what you hold, and tells you when to act
+
+The screener answered "should I buy this". Nothing answered "is what I bought still what I bought", and
+the four-hourly re-screen is the wrong instrument for it, because a rug takes minutes.
+
+### Holdings
+Record the mint, **the size you actually hold**, and optionally a stop. Opening one takes a full screen at
+that size, which becomes the baseline every later probe is compared against.
+
+The size is the substance rather than a detail. `SELL_PROBE_USD` was one global number, so the exit cost
+shown for every token answered the same question — somebody's $50 trade — instead of the right question
+for each position. Each holding is now priced at its own size, because price impact scales with it.
+
+### A fast loop that costs nothing
+Open holdings are probed **every five minutes**, and deliberately only through keyless sources: pool depth
+from DexScreener and a live sell quote from Jupiter. No RPC, so the cadence is affordable however many
+positions you have. The four-hourly re-screen still does the chain-level work and still feeds the record;
+these two loops have different jobs and different budgets.
+
+Each probe is stored, so drift is visible rather than inferred.
+
+### Alerts, on facts
+Telegram, through the plumbing that was already there. What triggers, in order of severity:
+
+- **A sale stops quoting at your size** — the honeypot shape, arriving after you bought.
+- **Liquidity below $1,000**, or **down more than 35% from entry** — someone is taking the pool out.
+- **The exit above 25%**, or **10 points worse than at entry**.
+- **A stop you set** being passed. Only ever because you supplied a number: the app has no opinion on
+  where a price should go, and alerting on a price move of its own choosing would be the implied advice
+  the rest of it avoids.
+
+Three things the rules get right on purpose. Comparison is against **entry**, not the last check, or a
+slow drain would never trip a threshold. A **failed request raises nothing** — an API that did not answer
+is not a pool that drained, and crying wolf on an outage is how a warning system gets ignored. And the
+same warning is **not repeated** inside six hours unless it escalates, because silence is what makes the
+interruptions worth reading.
+
+Also: `npm run watch` probes now instead of waiting for the tick, and the landing page leads with what
+you are holding, since an open position is the only thing on it that is time-critical.
+
 ## 0.9.2 — Raydium CLMM and Meteora DAMM v2 liquidity, decoded from verified layouts
 
 Every offset below was computed by hand from the program's **verbatim struct definition**, fetched from

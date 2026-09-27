@@ -248,6 +248,55 @@ model SyncLog {
 
 /// An append-only token screen. Never edited: a later screen is a new row, so the record of what was
 /// known at the time survives. Outcomes are written back onto the row that predicted them.
+/// A position you are actually in. Tells the watcher what to check often, and at what size.
+model TokenHolding {
+  id          String   @id @default(cuid())
+  chain       String   @default("solana")
+  mint        String
+  symbol      String?
+  /// What you put in, in dollars. Every sell simulation for this holding is priced at this size, because
+  /// price impact scales with it and a cost measured at someone else's size is not your exit.
+  sizeUsd     Float
+  /// Your own stop, as a share (0.4 = 40% down). Null = no price alert. The app has no opinion on price;
+  /// this is your rule being enforced mechanically.
+  stopLossPct Float?
+  note        String?
+  openedAt    DateTime @default(now())
+  closedAt    DateTime?
+
+  /// What was true when you opened it. Alerts compare against these, not against the last check.
+  baseLiquidityUsd Float?
+  baseExitCost     Float?
+  baseTopHolder    Float?
+  basePriceUsd     Float?
+
+  /// The most recent probe, for the UI.
+  lastCheckedAt    DateTime?
+  lastLiquidityUsd Float?
+  lastExitCost     Float?
+  lastPriceUsd     Float?
+
+  /// Alert de-duplication: the same warning is not resent every five minutes.
+  lastAlertKey      String?
+  lastAlertSeverity String?
+  lastAlertAt       DateTime?
+
+  createdAt   DateTime @default(now())
+  @@index([mint, closedAt])
+}
+
+/// One cheap probe of a holding: pool depth and what a sale quotes. A time series, so drift is visible.
+model TokenWatch {
+  id          String   @id @default(cuid())
+  mint        String
+  at          DateTime @default(now())
+  liquidityUsd Float?
+  exitCost    Float?
+  priceUsd    Float?
+  sellQuoted  Boolean  @default(true)
+  @@index([mint, at])
+}
+
 model TokenScreen {
   id          String   @id @default(cuid())
   chain       String   @default("solana")

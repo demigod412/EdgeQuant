@@ -8,7 +8,8 @@ import { CopyButton } from "@/components/CopyButton";
 import Link from "next/link";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, SectionTitle, cn, pct } from "@/components/ui";
-import { RemoveButton, ScreenForm } from "./tokens/form";
+import { HoldingForm, RemoveButton, ScreenForm, StopWatchingButton } from "./tokens/form";
+import { WATCH, watchAlerts } from "@/lib/token/watchRules";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Token screener" };
@@ -49,7 +50,7 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
   // Automatic screens fill the survival record and would bury your own a few hundred rows deep, so the
   // list shows yours by default. Hidden ones are excluded from the list but never from the record.
   const show = (await searchParams).show === "all" ? "all" : "mine";
-  const [screens, shortlistRows, record, autoCount, hiddenCount] = await Promise.all([
+  const [screens, shortlistRows, record, autoCount, hiddenCount, holdings] = await Promise.all([
     prisma.tokenScreen.findMany({
       where: { hiddenAt: null, ...(show === "mine" ? { source: "manual" } : {}) },
       orderBy: { screenedAt: "desc" }, take: 40,
@@ -63,6 +64,7 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
     screenRecord(prisma),
     prisma.tokenScreen.count({ where: { source: "auto" } }),
     prisma.tokenScreen.count({ where: { hiddenAt: { not: null } } }),
+    prisma.tokenHolding.findMany({ where: { closedAt: null }, orderBy: { openedAt: "asc" } }),
   ]);
 
   // ---- the shortlist ----------------------------------------------------------------------------
@@ -88,6 +90,54 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
           checked have been checked.
         </p>
       </header>
+
+      {/*
+        Holdings first, because an open position is the only thing on this page that is time-critical.
+        Everything else answers "should I buy"; this answers "is what I bought still what I bought".
+      */}
+      <Card>
+        <SectionTitle aside={holdings.length ? `${holdings.length} watched` : "nothing watched"}>What you are holding</SectionTitle>
+        {holdings.length > 0 && (
+          <ul className="mb-3 space-y-2">
+            {holdings.map((h) => {
+              const alerts = watchAlerts(
+                { liquidityUsd: h.lastLiquidityUsd, exitCost: h.lastExitCost, sellQuoted: true, topHolderShare: null, priceUsd: h.lastPriceUsd },
+                { liquidityUsd: h.baseLiquidityUsd, exitCost: h.baseExitCost, topHolderShare: h.baseTopHolder, priceUsd: h.basePriceUsd },
+                { stopLossPct: h.stopLossPct },
+              );
+              const drift = h.baseLiquidityUsd && h.lastLiquidityUsd != null ? h.lastLiquidityUsd / h.baseLiquidityUsd - 1 : null;
+              return (
+                <li key={h.id} className="border-b hairline pb-2 last:border-0 last:pb-0">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <span className="min-w-0">
+                      <span className="text-sm text-slate-200">{h.symbol ?? "unknown"}</span>
+                      <span className="num ml-2 text-[11px] text-slate-500">{h.mint.slice(0, 4)}…{h.mint.slice(-4)}</span>
+                      <span className="ml-2 inline-flex align-middle"><CopyButton text={h.mint} label="Copy" /></span>
+                      <span className="num ml-2 text-[11px] text-slate-500">{usd(h.sizeUsd)}{h.stopLossPct ? ` · stop ${(h.stopLossPct * 100).toFixed(0)}%` : ""}</span>
+                    </span>
+                    <span className="num flex items-center gap-2 text-[11px] text-slate-500">
+                      {h.lastExitCost != null && <>exit {pct(h.lastExitCost)}</>}
+                      {drift != null && <span className={drift < -WATCH.liquidityDropShare ? "text-miss" : drift < 0 ? "text-amber" : "text-edge"}>
+                        liquidity {drift >= 0 ? "+" : ""}{(drift * 100).toFixed(0)}%
+                      </span>}
+                      {h.lastCheckedAt ? <>· {fmtWat(h.lastCheckedAt, "HH:mm")}</> : <>· not yet checked</>}
+                      <StopWatchingButton id={h.id} />
+                    </span>
+                  </div>
+                  {alerts.length > 0 && (
+                    <ul className="mt-1 space-y-0.5">
+                      {alerts.map((a) => (
+                        <li key={a.key} className={cn("text-[11px]", a.severity === "critical" ? "text-miss" : "text-amber")}>· {a.line}</li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <HoldingForm />
+      </Card>
 
       <Card>
         <SectionTitle aside={`settles after ${SETTLE_HOURS}h`}>Screen a mint</SectionTitle>

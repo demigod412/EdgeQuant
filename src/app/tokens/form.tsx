@@ -2,11 +2,54 @@
 import { useActionState, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { removeScreen, screen, type ScreenState } from "./actions";
+import { addHolding, removeScreen, screen, stopWatching, type ScreenState } from "./actions";
 import { cn } from "@/components/ui";
 
 const input = "focus-ring w-full rounded-lg border hairline bg-black/30 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600";
 const btn = "focus-ring rounded-lg border border-edge/40 px-3 py-1.5 text-sm text-edge hover:bg-edge/10 disabled:opacity-50";
+
+/** Start watching a position, at the size you actually hold. */
+export function HoldingForm() {
+  const [s, act, pending] = useActionState<ScreenState, FormData>(addHolding, null);
+  const router = useRouter();
+  useEffect(() => { if (s?.ok) router.refresh(); }, [s, router]);
+  return (
+    <form action={act} className="space-y-2">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="min-w-0 flex-1 text-xs text-slate-400">Mint address
+          <input name="mint" autoComplete="off" spellCheck={false} placeholder="the token you are holding" className={cn(input, "num")} />
+        </label>
+        <label className="text-xs text-slate-400">Size ($)
+          <input name="sizeUsd" inputMode="decimal" placeholder="500" className={cn(input, "num w-24")} />
+        </label>
+        <label className="text-xs text-slate-400">Stop (%)
+          <input name="stopLossPct" inputMode="decimal" placeholder="none" className={cn(input, "num w-20")} />
+        </label>
+        <button className={btn} disabled={pending}>{pending ? "Screening…" : "Watch"}</button>
+      </div>
+      {s && <p role="status" className={cn("text-xs", s.ok ? "text-edge" : "text-miss")}>{s.message}</p>}
+      <p className="text-[11px] leading-relaxed text-slate-500">
+        Checked every few minutes against what was true when you opened it, and you are messaged when the
+        pool drains, a sale stops quoting, or your exit gets materially worse. The size matters: price
+        impact scales with it, so this prices <em>your</em> exit rather than a $50 one. A stop is
+        optional and is your rule &mdash; nothing here has an opinion on where a price should go.
+      </p>
+    </form>
+  );
+}
+
+/** Stop watching. The screens stay in the record; only the watching ends. */
+export function StopWatchingButton({ id }: { id: string }) {
+  const [busy, start] = useTransition();
+  const router = useRouter();
+  return (
+    <button type="button" disabled={busy}
+      className="focus-ring rounded-md border hairline px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-miss disabled:opacity-50"
+      onClick={() => start(async () => { await stopWatching(id); router.refresh(); })}>
+      {busy ? "Closing…" : "Close"}
+    </button>
+  );
+}
 
 /** Removing one screen. Says what it did, because hiding and deleting are not the same thing. */
 export function RemoveButton({ id }: { id: string }) {

@@ -22,6 +22,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, review: await reviewSetups(prisma), funding: await syncFunding(prisma), portfolio: await rebuildPortfolio(prisma) });
   }
   if (job === "signals") return NextResponse.json({ ok: true, ...(await generateSignals(prisma)) });
+  if (job === "watch") {
+    // The fast loop: keyless probes of open holdings only, so it can run every few minutes.
+    const { watchHoldings } = await import("@/lib/token/holdings");
+    return NextResponse.json({ ok: true, ...(await watchHoldings(prisma)) });
+  }
   if (job === "discover") {
     // Watch first, then discover. A re-screen of something you may be holding is worth more than one
     // more row in the record, and each has its own budget so neither starves the other.

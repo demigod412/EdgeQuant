@@ -7,6 +7,39 @@ import { parseMintInput } from "@/lib/token/mintInput";
 export type ScreenState = { ok: boolean; message: string } | null;
 
 /**
+ * Start watching a position.
+ *
+ * The size is required and is the point: every sell simulation for this holding is priced at it, so the
+ * exit cost you are shown is yours rather than a $50 stranger's.
+ */
+export async function addHolding(_: ScreenState, fd: FormData): Promise<ScreenState> {
+  const parsed = parseMintInput(String(fd.get("mint") ?? ""));
+  if (!parsed.ok) return { ok: false, message: parsed.message };
+  const sizeUsd = Number(fd.get("sizeUsd"));
+  if (!Number.isFinite(sizeUsd) || sizeUsd <= 0) return { ok: false, message: "Enter the position size in dollars." };
+  const stopRaw = String(fd.get("stopLossPct") ?? "").trim();
+  const stopPct = stopRaw ? Number(stopRaw) / 100 : null;
+  if (stopRaw && (!Number.isFinite(stopPct!) || stopPct! <= 0 || stopPct! >= 1)) {
+    return { ok: false, message: "A stop is a percentage between 1 and 99, or blank for none." };
+  }
+  try {
+    const { openHolding } = await import("@/lib/token/holdings");
+    const r = await openHolding(prisma, { mint: parsed.mint, sizeUsd, stopLossPct: stopPct });
+    revalidatePath("/");
+    return { ok: r.ok, message: r.message };
+  } catch (e) {
+    return { ok: false, message: `Could not start watching it: ${(e as Error).message}` };
+  }
+}
+
+export async function stopWatching(id: string): Promise<{ ok: boolean; message: string }> {
+  const { closeHolding } = await import("@/lib/token/holdings");
+  const r = await closeHolding(prisma, id);
+  revalidatePath("/");
+  return r;
+}
+
+/**
  * Take a screen off the list.
  *
  * Deliberately two behaviours, because "delete" and "tidy up" are different needs and only one of them
