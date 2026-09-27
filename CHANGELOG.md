@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.12.0 — the queue to sell
+
+Your idea, with the one correction it needed. What the top holders **paid** is not on chain, so their
+profit is not computable — a metric calling it profit would be inventing the most important number in it.
+What *is* computable, from figures already in every snapshot:
+
+- **Sellable value against the pool.** The ten largest wallets' holdings in dollars, against the pool they
+  would be selling into. *"$420k against a $38k pool — 11× the market they would be selling into. They
+  cannot all get out at these prices, and whoever moves first takes most of what is there."* This is the
+  one that decides whether **you** can get out, and it needs no assumption about anyone's intent.
+- **Sellable against irrevocably committed** — your original idea, stated honestly. *"$12k of liquidity
+  can never be withdrawn, against $420k those wallets can still sell: 35× more extractable than is
+  genuinely committed."* Carried with the caveat wherever it appears: locked LP is not necessarily theirs
+  (on a curve launch it comes from buyers), so it is an asymmetry of incentives, not evidence of a plan.
+- **What the deployer alone holds**, against the pool. A deployer sitting on more than the pool is severe
+  whatever their record.
+- **Exitable size.** *"A position up to about $2,500 leaves this pool deep enough for its quoted exit to
+  mean something."* The number you actually needed.
+
+**No check among the nine noticed any of this.** Holder concentration measures the *share* those wallets
+hold; it says nothing about what that share is worth against the market it would hit. A token can pass
+concentration at 20% and still have five times the pool sitting above you.
+
+Shown on every screen card as "The queue to sell", on each holding recomputed live from the latest cap,
+and as a compact `11× overhang` on the shortlist. A crowded queue now keeps a token out of `strong`, and
+a severe one out of `medium`.
+
+Also: a test fixture was itself an inconsistent token — an $900k cap with a $30k pool and 18%
+concentration is a crowded exit, and the new check was right to refuse to call it clean.
+
 ## 0.11.1 — the liquidity alarm was firing on price falls
 
 A pool's dollar value falls when the token falls, with nothing withdrawn. In a constant-product pool the

@@ -1,5 +1,6 @@
 import type { CheckResult, TokenSnapshot } from "./types";
 import type { ScreenGrade } from "./score";
+import { overhang, readOverhang } from "./overhang";
 
 /*
  * Strong, medium, weak — a single verdict instead of nine lines to read.
@@ -97,6 +98,17 @@ export function rateEntry(checks: CheckResult[], grade: ScreenGrade, t: TokenSna
     holdingBack.push(`The pool is ${depthMultiple.toFixed(0)}× your position — adequate, not deep.`);
   }
 
+  /*
+   * Who is ahead of you in the queue.
+   *
+   * Every other input here is a property of the token or of your size. This one is about the people
+   * already holding it: if the wallets above you can sell several times the pool, the exit is theirs
+   * before it is yours, and no check in the nine notices — concentration measures the SHARE they hold,
+   * not what that share is worth against the market it would hit.
+   */
+  const queue = readOverhang(overhang(t));
+  if (queue.level === "severe" || queue.level === "warn") holdingBack.push(...queue.lines);
+
   if (grade.coverage < RATING.mediumCoverage) {
     holdingBack.push(`Only ${pct(grade.coverage)} of the checks could be evaluated, so most of this verdict is missing information rather than findings.`);
   }
@@ -110,9 +122,9 @@ export function rateEntry(checks: CheckResult[], grade: ScreenGrade, t: TokenSna
   const depthOk = depthMultiple != null && depthMultiple >= RATING.mediumDepth;
 
   const strong = grade.coverage >= RATING.strongCoverage && !grade.softFails.length && !grade.warns.length
-    && !grade.unknownHard.length && exitStrong && depthStrong;
+    && !grade.unknownHard.length && exitStrong && depthStrong && queue.level === "ok";
   const medium = !grade.unknownHard.length && !grade.softFails.length
-    && grade.coverage >= RATING.mediumCoverage && exitOk && depthOk;
+    && grade.coverage >= RATING.mediumCoverage && exitOk && depthOk && queue.level !== "severe";
 
   const rating: Rating = strong ? "strong" : medium ? "medium" : "weak";
 

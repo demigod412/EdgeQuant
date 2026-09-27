@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { rateEntry, byClearance } from "@/lib/token/rating";
+import { overhang, readOverhang } from "@/lib/token/overhang";
 import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
@@ -595,7 +596,10 @@ describe("the record counts tokens, not repeated screens of the same token", () 
 
 describe("the strong / medium / weak rating", () => {
   const rate = (over: Partial<TokenSnapshot> = {}) => {
-    const t = clean({ sellProbeUsd: 500, liquidityUsd: 500 * 60, sellQuote: { probeIn: 500e6, probeOut: 495e6 }, sellPriceImpact: 0.01, ...over });
+    // The cap has to be proportionate to the pool, or the baseline token is itself a crowded exit:
+    // 18% of a $900k cap is $162k of sellable supply against a $30k pool, which is not a clean token.
+    const t = clean({ sellProbeUsd: 500, liquidityUsd: 500 * 60, marketCapUsd: 150_000,
+      sellQuote: { probeIn: 500e6, probeOut: 495e6 }, sellPriceImpact: 0.01, ...over });
     const checks = runChecks(t);
     return rateEntry(checks, gradeScreen(checks), t);
   };
@@ -998,5 +1002,65 @@ describe("telling a withdrawal from a price fall", () => {
   it("still calls an empty pool empty, whatever the price did", () => {
     // The absolute floor is not a comparison: below it there is no market, however it got there.
     expect(keys(obs({ priceUsd: 0.001, liquidityUsd: 400 }))).toContain("liquidity-gone");
+  });
+});
+
+describe("the queue to sell", () => {
+  /*
+   * The user's instinct, with the one correction it needed: what the top holders PAID is not on chain,
+   * so profit is not computable. What is computable is how much they could sell against the pool they
+   * would sell it into, and against the liquidity that can never be withdrawn.
+   */
+  const snap = (over: Partial<TokenSnapshot> = {}) => clean({
+    marketCapUsd: 1_000_000, liquidityUsd: 50_000, top10Share: 0.2, lpLockedShare: 1, deployerHoldShare: 0, ...over,
+  });
+
+  it("measures what the largest wallets could sell against the pool", () => {
+    // 20% of a $1m cap is $200k, against a $50k pool: four times the market.
+    const o = overhang(snap());
+    expect(o.sellableUsd).toBe(200_000);
+    expect(o.timesPool).toBeCloseTo(4, 5);
+  });
+
+  it("calls a crowded exit crowded, and a small one not", () => {
+    expect(readOverhang(overhang(snap({ top10Share: 0.4 }))).level).toBe("severe");   // 8x
+    expect(readOverhang(overhang(snap({ top10Share: 0.15 }))).level).toBe("warn");    // 3x
+    expect(readOverhang(overhang(snap({ top10Share: 0.02 }))).level).toBe("ok");      // 0.4x
+  });
+
+  it("never claims to know anyone's profit", () => {
+    const r = readOverhang(overhang(snap({ lpLockedShare: 0.2 })));
+    const all = r.lines.join(" ");
+    expect(all).toMatch(/not profit/);
+    // And says whose the locked liquidity may not be, since on a curve launch it came from buyers.
+    expect(all).toMatch(/not necessarily theirs/);
+  });
+
+  it("does not restate 'nothing is locked' as an infinite ratio", () => {
+    // That finding belongs to the liquidity-lock check; repeating it badly here would be worse.
+    expect(overhang(snap({ lpLockedShare: 0 })).timesLocked).toBeNull();
+    expect(overhang(snap({ lpLockedShare: null })).timesLocked).toBeNull();
+  });
+
+  it("flags a deployer holding more than the pool", () => {
+    expect(readOverhang(overhang(snap({ deployerHoldShare: 0.1 }))).level).toBe("severe"); // $100k vs $50k
+  });
+
+  it("says what size this pool can actually absorb", () => {
+    expect(overhang(snap()).exitableUsd).toBeCloseTo(50_000 / 15, 2);
+  });
+
+  it("keeps a crowded queue out of a strong rating", () => {
+    // No check among the nine notices this: concentration measures the share held, not what that share
+    // is worth against the market it would hit.
+    const t = snap({ top10Share: 0.3, sellProbeUsd: 500, liquidityUsd: 500 * 80, marketCapUsd: 5_000_000 });
+    const checks = runChecks(t);
+    const r = rateEntry(checks, gradeScreen(checks), t);
+    expect(r.rating).not.toBe("strong");
+    expect(r.holdingBack.join(" ")).toMatch(/whoever moves first/);
+  });
+
+  it("reports nothing rather than guessing when the inputs are missing", () => {
+    expect(readOverhang(overhang(snap({ marketCapUsd: null, fdvUsd: null }))).level).toBe("unknown");
   });
 });

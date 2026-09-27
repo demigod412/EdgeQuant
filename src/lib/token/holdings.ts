@@ -77,11 +77,13 @@ export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {})
        */
       const chainDue = dueForChainProbe(h.lastChainCheckAt, now);
       let topHolderShare = h.lastTopHolder;
+      let top10Share = h.lastTop10;
       let chainReadAt = h.lastChainCheckAt;
       if (chainDue) {
         const holders = await readHolders(h.mint, pairs?.poolAddresses ?? []).catch(() => null);
         if (holders && !("unchecked" in holders)) {
           topHolderShare = holders.topHolderShare;
+          top10Share = holders.top10Share;
           chainReadAt = now;
         } else if (holders) {
           // Unattributable pool accounts: the same reason the screener declines to call it a whale.
@@ -117,7 +119,7 @@ export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {})
         data: {
           lastCheckedAt: now, lastLiquidityUsd: obs.liquidityUsd, lastExitCost: obs.exitCost, lastPriceUsd: obs.priceUsd,
           lastMarketCapUsd: pairs?.marketCapUsd ?? null,
-          lastTopHolder: topHolderShare, lastChainCheckAt: chainReadAt,
+          lastTopHolder: topHolderShare, lastTop10: top10Share, lastChainCheckAt: chainReadAt,
           ...(sent && worst ? { lastAlertKey: worst.key, lastAlertSeverity: worst.severity, lastAlertAt: now } : {}),
         },
       });

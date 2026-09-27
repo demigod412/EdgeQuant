@@ -4,6 +4,7 @@ import { CHECKPOINT_HOURS, parseChecks, screenRecord, SETTLE_HOURS, type Checkpo
 import { gradeScreen, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { byClearance, rateEntry, type Rating } from "@/lib/token/rating";
 import { marketCaps } from "@/lib/token/sources";
+import { overhang, overhangLabel, readOverhang } from "@/lib/token/overhang";
 import { parseSnapshot } from "@/lib/token/ledger";
 import { CopyButton } from "@/components/CopyButton";
 import Link from "next/link";
@@ -146,6 +147,18 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                 { stopLossPct: h.stopLossPct, maxHoldHours: h.maxHoldHours, heldHours },
               );
               const stop = stopVerdict(h.stopLossPct, h.baseMove);
+              /*
+               * Recomputed from the latest probe rather than stored, so it moves with the cap. This is
+               * the question "can I still get out ahead of the wallets above me", which is not the same
+               * as any of the nine checks: they measure the share those wallets hold, not what it is
+               * worth against the market it would hit.
+               */
+              const capNow = capsNow.get(h.mint) ?? h.lastMarketCapUsd;
+              const queue = overhang({
+                marketCapUsd: capNow, fdvUsd: null, liquidityUsd: h.lastLiquidityUsd,
+                top10Share: h.lastTop10, lpLockedShare: null, deployerHoldShare: null,
+              } as Parameters<typeof overhang>[0]);
+              const queueRead = readOverhang(queue);
               // Net of what the price move explains, for the same reason the alert is: raw dollar drift
               // reads as withdrawal when it is often just the token repricing.
               const withdrawn = withdrawnShare(
@@ -188,6 +201,14 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                   )}
                   {/* Said where the stop can still be changed, rather than discovered when it misfires. */}
                   {stop.inNoise && <p className="mt-1 text-[11px] text-amber">· {stop.note}</p>}
+                  {queueRead.lines.length > 0 && (
+                    <p className={cn("mt-1 text-[11px]", queueRead.level === "severe" ? "text-miss" : queueRead.level === "warn" ? "text-amber" : "text-slate-500")}>
+                      · {queueRead.lines[0]}
+                      {queue.exitableUsd != null && h.sizeUsd > queue.exitableUsd && (
+                        <> Your {usd(h.sizeUsd)} is above the {usd(queue.exitableUsd)} this pool can absorb without the quote losing meaning.</>
+                      )}
+                    </p>
+                  )}
                 </li>
               );
             })}
@@ -228,6 +249,7 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                   <span className="num text-[11px] text-slate-500">
                     <CapMove then={parseSnapshot(row.snapshot)?.marketCapUsd ?? null} now={capsNow.get(row.mint) ?? null} />
                     {" · "}exit {rating.exitCost != null ? pct(rating.exitCost) : "—"}
+                    {(() => { const snap = parseSnapshot(row.snapshot); const l = snap ? overhangLabel(overhang(snap)) : null; return l ? <> · {l}</> : null; })()}
                     {rating.depthMultiple != null && <> · pool {rating.depthMultiple.toFixed(0)}× position</>}
                     {parseSnapshot(row.snapshot)?.sellProbeUsd != null && <> · rated at {usd(parseSnapshot(row.snapshot)!.sellProbeUsd!)}</>}
                   </span>
@@ -383,6 +405,26 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                     )}
                   </div>
                 )}
+                {(() => {
+                  const snap = parseSnapshot(s.snapshot);
+                  if (!snap) return null;
+                  const o = overhang(snap);
+                  const r = readOverhang(o);
+                  if (!r.lines.length && o.exitableUsd == null) return null;
+                  return (
+                    <div className="mb-3 rounded-lg border hairline bg-black/20 p-3">
+                      <p className="text-[10px] uppercase tracking-wide text-slate-500">The queue to sell</p>
+                      <ul className="mt-1 space-y-1">
+                        {r.lines.map((line, i) => (
+                          <li key={i} className={cn("text-[11px] leading-relaxed", i === 0 && r.level === "severe" ? "text-miss" : i === 0 && r.level === "warn" ? "text-amber" : "text-slate-400")}>· {line}</li>
+                        ))}
+                        {o.exitableUsd != null && (
+                          <li className="text-[11px] text-ice/80">· A position up to about {usd(o.exitableUsd)} leaves this pool deep enough for its quoted exit to mean something.</li>
+                        )}
+                      </ul>
+                    </div>
+                  );
+                })()}
                 <ul className="grid gap-1 sm:grid-cols-2">
                   {checks.map((c) => (
                     <li key={c.id} className="flex gap-2 text-[12px]">
