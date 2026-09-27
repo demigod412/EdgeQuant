@@ -22,9 +22,14 @@ export async function addHolding(_: ScreenState, fd: FormData): Promise<ScreenSt
   if (stopRaw && (!Number.isFinite(stopPct!) || stopPct! <= 0 || stopPct! >= 1)) {
     return { ok: false, message: "A stop is a percentage between 1 and 99, or blank for none." };
   }
+  const holdRaw = String(fd.get("maxHoldHours") ?? "").trim();
+  const maxHoldHours = holdRaw ? Number(holdRaw) : null;
+  if (holdRaw && (!Number.isFinite(maxHoldHours!) || maxHoldHours! <= 0)) {
+    return { ok: false, message: "A time stop is a number of hours, or blank for none." };
+  }
   try {
     const { openHolding } = await import("@/lib/token/holdings");
-    const r = await openHolding(prisma, { mint: parsed.mint, sizeUsd, stopLossPct: stopPct });
+    const r = await openHolding(prisma, { mint: parsed.mint, sizeUsd, stopLossPct: stopPct, maxHoldHours });
     revalidatePath("/");
     return { ok: r.ok, message: r.message };
   } catch (e) {

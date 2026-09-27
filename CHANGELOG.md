@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.0 — a time stop, and telling you when a price stop is meaningless
+
+Two additions on the weakest trigger the watcher has.
+
+### The app tells you whether your stop means anything
+It still does not choose the number &mdash; it says whether the number you chose can work. When you open a
+holding, the token's own recent movement is recorded, and a stop set inside it is called out immediately:
+*"this token has moved at least 44% in ordinary trading recently, so a 25% stop will fire on movement that
+carries no information."* The same note shows on the holding.
+
+The movement figure is a **net** change over six and twenty-four hours, which is necessarily smaller than
+the range travelled to get there. So it understates the noise &mdash; the useful direction, since a
+warning that could only err towards "your stop is fine" would be backwards.
+
+### A time stop
+*"This has not worked in six hours"* needs no forecast, which for a new token makes it a stronger rule
+than any price level. Set it in hours alongside the price stop; the holding shows time held against the
+limit. Its alert says plainly that nothing is wrong with the token &mdash; you decided in advance when to
+stop waiting, and that is a different kind of exit.
+
+### And what the honest recommendation actually is
+Neither stop is your protection, and the form now says so. **A rug leaves no bid to sell into**: by the
+time the price is down far enough to trip a stop because someone pulled the pool, the sale will not quote.
+The liquidity and exit-quote alerts fire *before* that, while a market still exists, which is the whole
+reason this watches the pool rather than the price. Sizing is what survives the rest.
+
+For a number: below about 30% a price stop fires on ordinary movement for most new tokens, so ~50% as a
+*this is probably dead* marker is more defensible than anything tighter. The time stop is the one worth
+relying on.
+
 ## 0.10.2 — market cap then, and market cap now
 
 A screen was a verdict with no scale attached. Whether a token cleared its checks at a $40k cap or a $40m

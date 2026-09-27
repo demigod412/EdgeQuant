@@ -6,7 +6,7 @@ import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
-import { WATCH, dueForChainProbe, shouldSend, watchAlerts, watchMessage, type Observation } from "@/lib/token/watchRules";
+import { WATCH, dueForChainProbe, noiseFloor, shouldSend, stopVerdict, watchAlerts, watchMessage, type Observation } from "@/lib/token/watchRules";
 import { POSITION_LAYOUTS, decodeLock, decodeSpread, lockSlice, spreadSlice, readU128LE, plausible, MAX_PLAUSIBLE_LIQUIDITY } from "@/lib/token/positionLayouts";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
 import { parseRecent, selectCandidates, type Candidate } from "@/lib/token/discover";
@@ -896,5 +896,57 @@ describe("the chain probe runs on its own slower cadence", () => {
     expect(alerts.map((a) => a.key)).toContain("concentration-rise");
     const first = alerts.find((a) => a.key === "concentration-rise")!;
     expect(shouldSend(first, { key: "concentration-rise", at: ago(5), severity: "warning" }, now)).toBe(false);
+  });
+});
+
+describe("stops, and whether yours means anything", () => {
+  it("takes the larger published move as the noise floor", () => {
+    // A NET move understates the range travelled to get there, so this can only understate the noise —
+    // which is the useful direction. A figure that erred towards "your stop is fine" would be backwards.
+    expect(noiseFloor(0.12, -0.44)).toBeCloseTo(0.44, 5);
+    expect(noiseFloor(-0.5, 0.1)).toBeCloseTo(0.5, 5);
+    expect(noiseFloor(null, null)).toBeNull();
+    expect(noiseFloor(undefined, 0.2)).toBeCloseTo(0.2, 5);
+  });
+
+  it("warns when a stop sits inside ordinary movement", () => {
+    const v = stopVerdict(0.25, 0.44);
+    expect(v.inNoise).toBe(true);
+    expect(v.note).toMatch(/carries no information/);
+    // And points at what actually protects you, rather than just at a bigger number.
+    expect(v.note).toMatch(/liquidity and exit alerts/);
+  });
+
+  it("confirms a stop that sits outside it", () => {
+    const v = stopVerdict(0.6, 0.44);
+    expect(v.inNoise).toBe(false);
+    expect(v.note).toMatch(/sits outside it/);
+  });
+
+  it("says nothing when there is no stop or no movement figure", () => {
+    expect(stopVerdict(null, 0.4)).toEqual({ inNoise: false, note: null });
+    expect(stopVerdict(0.3, null)).toEqual({ inNoise: false, note: null });
+  });
+
+  it("fires the time stop on the hour you set, and not before", () => {
+    const obs: Observation = { liquidityUsd: 100_000, exitCost: 0.02, sellQuoted: true, topHolderShare: 0.08, priceUsd: 1 };
+    const base = { liquidityUsd: 100_000, exitCost: 0.02, topHolderShare: 0.08, priceUsd: 1 };
+    const keys = (heldHours: number) => watchAlerts(obs, base, { maxHoldHours: 6, heldHours }).map((a) => a.key);
+    expect(keys(5.9)).toEqual([]);
+    expect(keys(6)).toContain("time-stop");
+    expect(keys(19)).toContain("time-stop");
+  });
+
+  it("does not invent a time stop you did not set", () => {
+    const obs: Observation = { liquidityUsd: 100_000, exitCost: 0.02, sellQuoted: true, topHolderShare: 0.08, priceUsd: 1 };
+    const base = { liquidityUsd: 100_000, exitCost: 0.02, topHolderShare: 0.08, priceUsd: 1 };
+    expect(watchAlerts(obs, base, { heldHours: 900 })).toEqual([]);
+  });
+
+  it("says the time stop is a decision, not a fault in the token", () => {
+    const obs: Observation = { liquidityUsd: 100_000, exitCost: 0.02, sellQuoted: true, topHolderShare: 0.08, priceUsd: 1 };
+    const base = { liquidityUsd: 100_000, exitCost: 0.02, topHolderShare: 0.08, priceUsd: 1 };
+    const a = watchAlerts(obs, base, { maxHoldHours: 6, heldHours: 7 })[0];
+    expect(a.line).toMatch(/Nothing is wrong with it/);
   });
 });

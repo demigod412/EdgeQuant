@@ -42,6 +42,36 @@ export const WATCH = {
   chainProbeMinutes: 30,
 } as const;
 
+/**
+ * A floor on how much this token moves in ordinary trading.
+ *
+ * Taken from the published net change over six and twenty-four hours. A NET move is necessarily smaller
+ * than the range it travelled to get there, so this understates the real swing — which is the useful
+ * direction: if your stop is inside even this, it is certainly inside the noise. A number that can only
+ * err towards "your stop is fine" would be the wrong way round.
+ */
+export function noiseFloor(move6h: number | null | undefined, move24h: number | null | undefined): number | null {
+  const xs = [move6h, move24h].filter((x): x is number => typeof x === "number" && Number.isFinite(x)).map(Math.abs);
+  return xs.length ? Math.max(...xs) : null;
+}
+
+/**
+ * Is a stop set inside the token's ordinary movement?
+ *
+ * The app does not choose the number. It says whether the number means anything, which is the same
+ * stance it takes everywhere else: a stop inside the noise band is not protection, it is a guarantee of
+ * being stopped out by a move that carried no information.
+ */
+export function stopVerdict(stopPct: number | null | undefined, noise: number | null): { inNoise: boolean; note: string | null } {
+  if (stopPct == null) return { inNoise: false, note: null };
+  if (noise == null) return { inNoise: false, note: null };
+  if (stopPct <= noise) {
+    return { inNoise: true,
+      note: `This token has moved at least ${pct(noise)} in ordinary trading recently, so a ${pct(stopPct)} stop will fire on movement that carries no information. Widen it, or rely on the liquidity and exit alerts instead — they catch the failure that actually traps you, and they do it while there is still a bid.` };
+  }
+  return { inNoise: false, note: `Recent ordinary movement is at least ${pct(noise)}, so a ${pct(stopPct)} stop sits outside it.` };
+}
+
 /** Is this holding due a chain read? Never read one before counts as due. */
 export function dueForChainProbe(lastAt: Date | null | undefined, now = new Date()): boolean {
   if (!lastAt) return true;
@@ -85,7 +115,7 @@ const usd = (x: number) => `$${Math.round(x).toLocaleString("en-US")}`;
 export function watchAlerts(
   obs: Observation,
   base: Baseline,
-  opts: { stopLossPct?: number | null } = {},
+  opts: { stopLossPct?: number | null; maxHoldHours?: number | null; heldHours?: number | null } = {},
 ): WatchAlert[] {
   const out: WatchAlert[] = [];
 
@@ -129,6 +159,19 @@ export function watchAlerts(
       out.push({ key: "stop-loss", severity: "critical",
         line: `Down ${pct(fall)} from your entry, past the ${pct(opts.stopLossPct)} stop you set.` });
     }
+  }
+
+  /*
+   * A time stop, which for a new token is arguably a better rule than any price level: "this has not
+   * worked in N hours" is mechanical, needs no forecast, and matches the discipline the rest of the app
+   * already holds itself to — nothing on the trading side is held past six hours, and a memecoin has not
+   * earned more patience than a BTC scalp.
+   *
+   * Like the price stop, it exists only because you set a number.
+   */
+  if (opts.maxHoldHours != null && opts.heldHours != null && opts.heldHours >= opts.maxHoldHours) {
+    out.push({ key: "time-stop", severity: "critical",
+      line: `Held ${opts.heldHours.toFixed(1)} hours, past the ${opts.maxHoldHours}-hour limit you set. Nothing is wrong with it; you decided in advance that this is when you stop waiting.` });
   }
 
   const rank = { critical: 0, warning: 1 } as const;

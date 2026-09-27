@@ -198,7 +198,8 @@ export async function marketCaps(mints: string[]): Promise<Map<string, number>> 
 /** Pools, liquidity and volume. No key needed. */
 export async function readPairs(mint: string) {
   type Pair = { chainId: string; pairAddress: string; dexId?: string; labels?: string[]; baseToken: { address: string; symbol?: string; name?: string };
-    priceUsd?: string; liquidity?: { usd?: number }; marketCap?: number; fdv?: number; volume?: { h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
+    priceUsd?: string; liquidity?: { usd?: number }; marketCap?: number; fdv?: number; volume?: { h24?: number };
+    priceChange?: { h6?: number; h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
   const r = await get<{ pairs?: Pair[] | null }>(`${DEX}/latest/dex/tokens/${mint}`);
   const pairs = (r.pairs ?? []).filter((p) => p.chainId === "solana");
   if (!pairs.length) return null;
@@ -224,6 +225,9 @@ export async function readPairs(mint: string) {
      * conservative direction: FDV is the larger number, so a cap shown here is never understated.
      */
     marketCapUsd: deepest.marketCap ?? deepest.fdv ?? null,
+    // Published as percentages. Used only to judge whether a stop you set sits inside ordinary movement.
+    move6h: deepest.priceChange?.h6 != null ? deepest.priceChange.h6 / 100 : null,
+    move24h: deepest.priceChange?.h24 != null ? deepest.priceChange.h24 / 100 : null,
     volume24hUsd: pairs.reduce((s, p) => s + (p.volume?.h24 ?? 0), 0),
     buys24h: pairs.reduce((s, p) => s + (p.txns?.h24?.buys ?? 0), 0),
     sells24h: pairs.reduce((s, p) => s + (p.txns?.h24?.sells ?? 0), 0),

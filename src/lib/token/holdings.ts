@@ -2,7 +2,7 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 import { readHolders, readPairs, simulateSell } from "./sources";
 import { screenToken } from "./ledger";
-import { dueForChainProbe, shouldSend, watchAlerts, watchMessage, type Baseline, type Observation, type Severity } from "./watchRules";
+import { dueForChainProbe, noiseFloor, shouldSend, stopVerdict, watchAlerts, watchMessage, type Baseline, type Observation, type Severity } from "./watchRules";
 
 /*
  * Watching what you actually hold.
@@ -17,7 +17,7 @@ import { dueForChainProbe, shouldSend, watchAlerts, watchMessage, type Baseline,
  */
 
 /** Open a holding and take its baseline. The full screen at your size establishes what "normal" is. */
-export async function openHolding(db: PrismaClient, input: { mint: string; sizeUsd: number; stopLossPct?: number | null; note?: string | null }) {
+export async function openHolding(db: PrismaClient, input: { mint: string; sizeUsd: number; stopLossPct?: number | null; maxHoldHours?: number | null; note?: string | null }) {
   const existing = await db.tokenHolding.findFirst({ where: { mint: input.mint, closedAt: null } });
   if (existing) return { ok: false as const, message: "You already have an open holding for that mint." };
 
@@ -30,7 +30,8 @@ export async function openHolding(db: PrismaClient, input: { mint: string; sizeU
   const holding = await db.tokenHolding.create({
     data: {
       mint: input.mint, symbol: row.symbol, sizeUsd: input.sizeUsd,
-      stopLossPct: input.stopLossPct ?? null, note: input.note ?? null,
+      stopLossPct: input.stopLossPct ?? null, maxHoldHours: input.maxHoldHours ?? null, note: input.note ?? null,
+      baseMove: noiseFloor(pairs?.move6h, pairs?.move24h),
       baseMarketCapUsd: pairs?.marketCapUsd ?? null,
       baseLiquidityUsd: snap?.liquidityUsd ?? null,
       baseExitCost: exitCost,
@@ -38,7 +39,10 @@ export async function openHolding(db: PrismaClient, input: { mint: string; sizeU
       basePriceUsd: pairs?.priceUsd ?? null,
     },
   });
-  return { ok: true as const, holding, grade, message: `Watching ${row.symbol ?? "it"} at $${input.sizeUsd}. ${grade.headline}` };
+  // Said at the moment it can still be changed, rather than discovered when the alert fires on noise.
+  const stop = stopVerdict(input.stopLossPct, holding.baseMove);
+  return { ok: true as const, holding, grade,
+    message: `Watching ${row.symbol ?? "it"} at $${input.sizeUsd}. ${grade.headline}${stop.inNoise ? ` — ${stop.note}` : ""}` };
 }
 
 export async function closeHolding(db: PrismaClient, id: string) {
@@ -99,7 +103,8 @@ export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {})
         liquidityUsd: h.baseLiquidityUsd, exitCost: h.baseExitCost,
         topHolderShare: h.baseTopHolder, priceUsd: h.basePriceUsd,
       };
-      const alerts = watchAlerts(obs, base, { stopLossPct: h.stopLossPct });
+      const heldHours = (now.getTime() - h.openedAt.getTime()) / 3600_000;
+      const alerts = watchAlerts(obs, base, { stopLossPct: h.stopLossPct, maxHoldHours: h.maxHoldHours, heldHours });
       const worst = alerts[0];
       let sent = false;
       if (worst && shouldSend(worst, { key: h.lastAlertKey, at: h.lastAlertAt, severity: h.lastAlertSeverity as Severity | null }, now)) {

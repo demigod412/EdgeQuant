@@ -23,7 +23,10 @@ export function HoldingForm() {
           <input name="sizeUsd" inputMode="decimal" placeholder="500" className={cn(input, "num w-24")} />
         </label>
         <label className="text-xs text-slate-400">Stop (%)
-          <input name="stopLossPct" inputMode="decimal" placeholder="none" className={cn(input, "num w-20")} />
+          <input name="stopLossPct" inputMode="decimal" placeholder="50" className={cn(input, "num w-20")} />
+        </label>
+        <label className="text-xs text-slate-400">Time (h)
+          <input name="maxHoldHours" inputMode="decimal" placeholder="6" className={cn(input, "num w-20")} />
         </label>
         <button className={btn} disabled={pending}>{pending ? "Screening…" : "Watch"}</button>
       </div>
@@ -31,8 +34,16 @@ export function HoldingForm() {
       <p className="text-[11px] leading-relaxed text-slate-500">
         Checked every few minutes against what was true when you opened it, and you are messaged when the
         pool drains, a sale stops quoting, or your exit gets materially worse. The size matters: price
-        impact scales with it, so this prices <em>your</em> exit rather than a $50 one. A stop is
-        optional and is your rule &mdash; nothing here has an opinion on where a price should go.
+        impact scales with it, so this prices <em>your</em> exit rather than a $50 one.
+      </p>
+      <p className="text-[11px] leading-relaxed text-slate-500">
+        Both stops are optional and both are <em>your</em> rules &mdash; nothing here has an opinion on
+        where a price should go. A <b className="text-slate-300">price stop under about 30% will fire on
+        ordinary movement</b> for most new tokens, and you will be told if the one you set sits inside
+        this token&rsquo;s own recent range. The <b className="text-slate-300">time stop</b> is the
+        stronger of the two: &ldquo;this has not worked in six hours&rdquo; needs no forecast. Neither is
+        your real protection &mdash; a rug leaves no bid to sell into, so the liquidity and exit alerts
+        are what catch the failure that traps you, and sizing is what survives it.
       </p>
     </form>
   );

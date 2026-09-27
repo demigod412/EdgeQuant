@@ -10,7 +10,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, SectionTitle, cn, pct } from "@/components/ui";
 import { HoldingForm, RemoveButton, ScreenForm, StopWatchingButton } from "./tokens/form";
-import { WATCH, watchAlerts } from "@/lib/token/watchRules";
+import { WATCH, stopVerdict, watchAlerts } from "@/lib/token/watchRules";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Token screener" };
@@ -139,11 +139,13 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
         {holdings.length > 0 && (
           <ul className="mb-3 space-y-2">
             {holdings.map((h) => {
+              const heldHours = (Date.now() - h.openedAt.getTime()) / 3600_000;
               const alerts = watchAlerts(
                 { liquidityUsd: h.lastLiquidityUsd, exitCost: h.lastExitCost, sellQuoted: true, topHolderShare: h.lastTopHolder, priceUsd: h.lastPriceUsd },
                 { liquidityUsd: h.baseLiquidityUsd, exitCost: h.baseExitCost, topHolderShare: h.baseTopHolder, priceUsd: h.basePriceUsd },
-                { stopLossPct: h.stopLossPct },
+                { stopLossPct: h.stopLossPct, maxHoldHours: h.maxHoldHours, heldHours },
               );
+              const stop = stopVerdict(h.stopLossPct, h.baseMove);
               const drift = h.baseLiquidityUsd && h.lastLiquidityUsd != null ? h.lastLiquidityUsd / h.baseLiquidityUsd - 1 : null;
               return (
                 <li key={h.id} className="border-b hairline pb-2 last:border-0 last:pb-0">
@@ -152,7 +154,11 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                       <span className="text-sm text-slate-200">{h.symbol ?? "unknown"}</span>
                       <span className="num ml-2 text-[11px] text-slate-500">{h.mint.slice(0, 4)}…{h.mint.slice(-4)}</span>
                       <span className="ml-2 inline-flex align-middle"><CopyButton text={h.mint} label="Copy" /></span>
-                      <span className="num ml-2 text-[11px] text-slate-500">{usd(h.sizeUsd)}{h.stopLossPct ? ` · stop ${(h.stopLossPct * 100).toFixed(0)}%` : ""}</span>
+                      <span className="num ml-2 text-[11px] text-slate-500">
+                        {usd(h.sizeUsd)}
+                        {h.stopLossPct ? <span className={stop.inNoise ? "text-amber" : ""}> · stop {(h.stopLossPct * 100).toFixed(0)}%</span> : null}
+                        {h.maxHoldHours ? ` · ${heldHours.toFixed(1)}/${h.maxHoldHours}h` : ` · held ${heldHours.toFixed(1)}h`}
+                      </span>
                       <span className="ml-2 text-[11px]">
                         {/* The live figure where the batch found one; otherwise what the last scan saw. */}
                         <CapMove then={h.baseMarketCapUsd} now={capsNow.get(h.mint) ?? h.lastMarketCapUsd} />
@@ -175,6 +181,8 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                       ))}
                     </ul>
                   )}
+                  {/* Said where the stop can still be changed, rather than discovered when it misfires. */}
+                  {stop.inNoise && <p className="mt-1 text-[11px] text-amber">· {stop.note}</p>}
                 </li>
               );
             })}

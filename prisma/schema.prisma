@@ -260,6 +260,12 @@ model TokenHolding {
   /// Your own stop, as a share (0.4 = 40% down). Null = no price alert. The app has no opinion on price;
   /// this is your rule being enforced mechanically.
   stopLossPct Float?
+  /// Your time stop, in hours. "This has not worked in N hours" needs no forecast, which for a new token
+  /// makes it a stronger rule than a price level. Null = no time alert.
+  maxHoldHours Float?
+  /// A floor on the token's ordinary movement when you opened it, used to say whether your stop is
+  /// inside the noise. A net move understates the range, so it can only understate the noise.
+  baseMove Float?
   note        String?
   openedAt    DateTime @default(now())
   closedAt    DateTime?
