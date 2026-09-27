@@ -265,6 +265,7 @@ model TokenHolding {
   closedAt    DateTime?
 
   /// What was true when you opened it. Alerts compare against these, not against the last check.
+  baseMarketCapUsd Float?
   baseLiquidityUsd Float?
   baseExitCost     Float?
   baseTopHolder    Float?
@@ -272,6 +273,7 @@ model TokenHolding {
 
   /// The most recent probe, for the UI.
   lastCheckedAt    DateTime?
+  lastMarketCapUsd Float?
   lastLiquidityUsd Float?
   lastExitCost     Float?
   lastPriceUsd     Float?
@@ -295,6 +297,7 @@ model TokenWatch {
   mint        String
   at          DateTime @default(now())
   liquidityUsd Float?
+  marketCapUsd Float?
   exitCost    Float?
   priceUsd    Float?
   sellQuoted  Boolean  @default(true)

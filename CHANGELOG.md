@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.2 — market cap then, and market cap now
+
+A screen was a verdict with no scale attached. Whether a token cleared its checks at a $40k cap or a $40m
+one is most of what the verdict means in practice, and neither figure was recorded or shown.
+
+- **Every screen records the market cap it was taken at**, and each card says so.
+- **Holdings show the cap when you logged it against the cap at the last scan**, with the move between
+  them, refreshed on every five-minute probe. Each probe stores it too, so the series is there.
+- **The shortlist shows the same pair** — screened cap versus live cap.
+
+"Now" costs one request for the whole page: DexScreener takes 30 mints at a time, so a present-value
+column is a single keyless call rather than one per row.
+
+Two deliberate choices. Market cap is preferred where DexScreener publishes one and **fully diluted value
+is the fallback**, which errs towards the larger number — the other way round would flatter a token with
+a big locked allocation. And the move is coloured but **not interpreted**: a cap being up is not this app
+saying the token is good, and a cap being down is not it saying to sell. No alert fires on it, for the
+same reason nothing else here forecasts a price.
+
 ## 0.10.1 — holder concentration in the watch loop, on its own cadence
 
 The fast loop could not see who was accumulating, because that needs the chain and everything else in it

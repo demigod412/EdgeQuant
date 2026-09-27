@@ -3,6 +3,7 @@ import { fmtWat } from "@/lib/time";
 import { CHECKPOINT_HOURS, parseChecks, screenRecord, SETTLE_HOURS, type Checkpoint } from "@/lib/token/ledger";
 import { gradeScreen, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { byClearance, rateEntry, type Rating } from "@/lib/token/rating";
+import { marketCaps } from "@/lib/token/sources";
 import { parseSnapshot } from "@/lib/token/ledger";
 import { CopyButton } from "@/components/CopyButton";
 import Link from "next/link";
@@ -31,6 +32,40 @@ const RATING_STYLE: Record<Rating, string> = {
   avoid: "border-miss/60 bg-miss/15 text-miss",
 };
 const usd = (x: number) => `$${Math.round(x).toLocaleString("en-US")}`;
+
+/** Compact money, because a market cap is read at a glance and $1,240,000 is four glances. */
+function money(x: number): string {
+  const a = Math.abs(x);
+  if (a >= 1e9) return `$${(x / 1e9).toFixed(a >= 1e10 ? 0 : 1)}B`;
+  if (a >= 1e6) return `$${(x / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M`;
+  if (a >= 1e3) return `$${(x / 1e3).toFixed(a >= 1e4 ? 0 : 1)}K`;
+  return `$${Math.round(x)}`;
+}
+
+/**
+ * Market cap then and now.
+ *
+ * Shown as two numbers and the move between them rather than one number, because the cap you screened at
+ * is the only thing the present one can be judged against. Coloured, but not interpreted: a cap being up
+ * is not this app saying the token is good, and a cap being down is not it saying to sell.
+ */
+function CapMove({ then, now }: { then: number | null; now: number | null }) {
+  if (then == null && now == null) return null;
+  const move = then && now ? now / then - 1 : null;
+  return (
+    <span className="num whitespace-nowrap">
+      <span className="text-slate-500">cap </span>
+      {then != null ? money(then) : "—"}
+      <span className="text-slate-600"> → </span>
+      {now != null ? <span className="text-slate-200">{money(now)}</span> : <span className="text-slate-500">—</span>}
+      {move != null && (
+        <span className={cn("ml-1", move > 0.02 ? "text-edge" : move < -0.02 ? "text-miss" : "text-slate-500")}>
+          ({move >= 0 ? "+" : ""}{(move * 100).toFixed(0)}%)
+        </span>
+      )}
+    </span>
+  );
+}
 
 /**
  * Re-rate a stored screen.
@@ -68,6 +103,8 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
   ]);
 
   // ---- the shortlist ----------------------------------------------------------------------------
+  // "Now" for everything on the page in one keyless request: DexScreener takes 30 mints at a time, so a
+  // present-value column costs one call rather than one per row.
   const seenMint = new Set<string>();
   const shortlist = shortlistRows
     .filter((r) => (seenMint.has(r.mint) ? false : (seenMint.add(r.mint), true)))
@@ -76,6 +113,8 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
     .filter((x) => x.rating.rating === "strong" || x.rating.rating === "medium")
     .sort((a, b) => byClearance(a.rating, b.rating))
     .slice(0, 6);
+
+  const capsNow = await marketCaps([...shortlist.map((x) => x.row.mint), ...holdings.map((h) => h.mint)]).catch(() => new Map<string, number>());
 
   return (
     <div className="space-y-4">
@@ -114,6 +153,10 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                       <span className="num ml-2 text-[11px] text-slate-500">{h.mint.slice(0, 4)}…{h.mint.slice(-4)}</span>
                       <span className="ml-2 inline-flex align-middle"><CopyButton text={h.mint} label="Copy" /></span>
                       <span className="num ml-2 text-[11px] text-slate-500">{usd(h.sizeUsd)}{h.stopLossPct ? ` · stop ${(h.stopLossPct * 100).toFixed(0)}%` : ""}</span>
+                      <span className="ml-2 text-[11px]">
+                        {/* The live figure where the batch found one; otherwise what the last scan saw. */}
+                        <CapMove then={h.baseMarketCapUsd} now={capsNow.get(h.mint) ?? h.lastMarketCapUsd} />
+                      </span>
                     </span>
                     <span className="num flex items-center gap-2 text-[11px] text-slate-500">
                       {h.lastExitCost != null && <>exit {pct(h.lastExitCost)}</>}
@@ -170,7 +213,8 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                     <span className="ml-2 inline-flex align-middle"><CopyButton text={row.mint} label="Copy" /></span>
                   </span>
                   <span className="num text-[11px] text-slate-500">
-                    exit {rating.exitCost != null ? pct(rating.exitCost) : "—"}
+                    <CapMove then={parseSnapshot(row.snapshot)?.marketCapUsd ?? null} now={capsNow.get(row.mint) ?? null} />
+                    {" · "}exit {rating.exitCost != null ? pct(rating.exitCost) : "—"}
                     {rating.depthMultiple != null && <> · pool {rating.depthMultiple.toFixed(0)}× position</>}
                     {parseSnapshot(row.snapshot)?.sellProbeUsd != null && <> · rated at {usd(parseSnapshot(row.snapshot)!.sellProbeUsd!)}</>}
                   </span>
@@ -285,6 +329,9 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                     <p className="num text-[11px] text-slate-500">
                       {fmtWat(s.screenedAt, "d MMM HH:mm")}
                       {s.liquidityUsd != null && <> · liquidity ${Math.round(s.liquidityUsd).toLocaleString("en-US")}</>}
+                      {/* The cap as it stood when this screen was taken. A screen is a snapshot, and this
+                          is part of it: without it, "cleared at the time" has no scale attached. */}
+                      {parseSnapshot(s.snapshot)?.marketCapUsd != null && <> · cap {money(parseSnapshot(s.snapshot)!.marketCapUsd!)} at screen</>}
                       {(Array.isArray(s.checkpoints) ? (s.checkpoints as unknown as Checkpoint[]) : []).map((c) => (
                         <span key={c.hours}> · {c.hours}h {c.survived ? <span className="text-edge">ok</span> : <span className="text-miss">{c.failureKind}</span>}</span>
                       ))}

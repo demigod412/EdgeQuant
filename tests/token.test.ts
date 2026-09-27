@@ -26,7 +26,7 @@ const clean = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   deployerHoldShare: 0, deployerAttributedMints: null, deployerIdentifiedBy: "creator", launchpad: null,
   sniperBundleShare: 0.02, sniperWallets: 3, openingSlots: 60, openingUnchecked: null,
   sellQuote: { probeIn: 50, probeOut: 48.5 }, sellPriceImpact: 0.01, sellProbeUsd: 50,
-  fdvUsd: 900_000, volume24hUsd: 300_000, buys24h: 900, sells24h: 800,
+  fdvUsd: 900_000, marketCapUsd: 900_000, volume24hUsd: 300_000, buys24h: 900, sells24h: 800,
   ...over,
 });
 const find = (t: TokenSnapshot, id: string) => runChecks(t).find((c) => c.id === id)!;

@@ -31,6 +31,7 @@ export async function openHolding(db: PrismaClient, input: { mint: string; sizeU
     data: {
       mint: input.mint, symbol: row.symbol, sizeUsd: input.sizeUsd,
       stopLossPct: input.stopLossPct ?? null, note: input.note ?? null,
+      baseMarketCapUsd: pairs?.marketCapUsd ?? null,
       baseLiquidityUsd: snap?.liquidityUsd ?? null,
       baseExitCost: exitCost,
       baseTopHolder: snap?.topHolderShare ?? null,
@@ -92,7 +93,7 @@ export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {})
         topHolderShare,
         priceUsd: pairs?.priceUsd ?? null,
       };
-      await db.tokenWatch.create({ data: { mint: h.mint, liquidityUsd: obs.liquidityUsd, exitCost: obs.exitCost, priceUsd: obs.priceUsd, sellQuoted: obs.sellQuoted } });
+      await db.tokenWatch.create({ data: { mint: h.mint, liquidityUsd: obs.liquidityUsd, marketCapUsd: pairs?.marketCapUsd ?? null, exitCost: obs.exitCost, priceUsd: obs.priceUsd, sellQuoted: obs.sellQuoted } });
 
       const base: Baseline = {
         liquidityUsd: h.baseLiquidityUsd, exitCost: h.baseExitCost,
@@ -110,6 +111,7 @@ export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {})
         where: { id: h.id },
         data: {
           lastCheckedAt: now, lastLiquidityUsd: obs.liquidityUsd, lastExitCost: obs.exitCost, lastPriceUsd: obs.priceUsd,
+          lastMarketCapUsd: pairs?.marketCapUsd ?? null,
           lastTopHolder: topHolderShare, lastChainCheckAt: chainReadAt,
           ...(sent && worst ? { lastAlertKey: worst.key, lastAlertSeverity: worst.severity, lastAlertAt: now } : {}),
         },

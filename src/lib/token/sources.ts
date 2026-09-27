@@ -167,10 +167,38 @@ export async function readHolders(mint: string, poolAddresses: string[]): Promis
   return { top10Share: share(10), topHolderShare: top, holdersRanked: outside.length };
 }
 
+/**
+ * Market cap for many mints in one request.
+ *
+ * DexScreener takes up to 30 addresses at a time, so "what is it worth now" costs a single keyless call
+ * for a whole list rather than one per row. Missing mints are simply absent from the map: a token whose
+ * pool is not indexed has no cap, which is different from a cap of zero.
+ */
+export async function marketCaps(mints: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const unique = [...new Set(mints)].slice(0, 30);
+  if (!unique.length) return out;
+  type Pair = { chainId: string; baseToken?: { address?: string }; marketCap?: number; fdv?: number; liquidity?: { usd?: number } };
+  const r = await get<{ pairs?: Pair[] | null }>(`${DEX}/latest/dex/tokens/${unique.join(",")}`).catch(() => null);
+  // A token can have several pools; take the figure from whichever is deepest, as readPairs does.
+  const best = new Map<string, { liq: number; cap: number }>();
+  for (const p of r?.pairs ?? []) {
+    if (p.chainId !== "solana") continue;
+    const mint = p.baseToken?.address;
+    const cap = p.marketCap ?? p.fdv;
+    if (!mint || cap == null) continue;
+    const liq = p.liquidity?.usd ?? 0;
+    const held = best.get(mint);
+    if (!held || liq > held.liq) best.set(mint, { liq, cap });
+  }
+  for (const [mint, v] of best) out.set(mint, v.cap);
+  return out;
+}
+
 /** Pools, liquidity and volume. No key needed. */
 export async function readPairs(mint: string) {
   type Pair = { chainId: string; pairAddress: string; dexId?: string; labels?: string[]; baseToken: { address: string; symbol?: string; name?: string };
-    priceUsd?: string; liquidity?: { usd?: number }; fdv?: number; volume?: { h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
+    priceUsd?: string; liquidity?: { usd?: number }; marketCap?: number; fdv?: number; volume?: { h24?: number }; txns?: { h24?: { buys?: number; sells?: number } }; pairCreatedAt?: number };
   const r = await get<{ pairs?: Pair[] | null }>(`${DEX}/latest/dex/tokens/${mint}`);
   const pairs = (r.pairs ?? []).filter((p) => p.chainId === "solana");
   if (!pairs.length) return null;
@@ -188,6 +216,14 @@ export async function readPairs(mint: string) {
     name: deepest.baseToken.name ?? null,
     liquidityUsd: pairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0),
     fdvUsd: deepest.fdv ?? null,
+    /*
+     * Market cap where DexScreener reports one, falling back to fully diluted value.
+     *
+     * They differ whenever supply is not fully circulating, and preferring the smaller, circulating
+     * figure would flatter a token with a big locked allocation. Falling back the other way is the
+     * conservative direction: FDV is the larger number, so a cap shown here is never understated.
+     */
+    marketCapUsd: deepest.marketCap ?? deepest.fdv ?? null,
     volume24hUsd: pairs.reduce((s, p) => s + (p.volume?.h24 ?? 0), 0),
     buys24h: pairs.reduce((s, p) => s + (p.txns?.h24?.buys ?? 0), 0),
     sells24h: pairs.reduce((s, p) => s + (p.txns?.h24?.sells ?? 0), 0),
@@ -313,7 +349,8 @@ export async function snapshot(mint: string, opts: { probeUsd?: number } = {}): 
       openingUnchecked: openWhy,
       sellQuote: sell.sellQuote,
       sellProbeUsd: sell.sellProbeUsd, sellPriceImpact: sell.sellPriceImpact,
-      fdvUsd: pairs?.fdvUsd ?? null, volume24hUsd: pairs?.volume24hUsd ?? null,
+      fdvUsd: pairs?.fdvUsd ?? null, marketCapUsd: pairs?.marketCapUsd ?? null,
+      volume24hUsd: pairs?.volume24hUsd ?? null,
       buys24h: pairs?.buys24h ?? null, sells24h: pairs?.sells24h ?? null,
     },
   };

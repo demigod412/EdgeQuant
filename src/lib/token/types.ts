@@ -119,6 +119,8 @@ export interface TokenSnapshot {
 
   // ---- market context, for the record rather than for a forecast ----
   fdvUsd: number | null;
+  /** Market cap at screen time, or fully diluted value where no circulating figure is published. */
+  marketCapUsd: number | null;
   volume24hUsd: number | null;
   buys24h: number | null;
   sells24h: number | null;
