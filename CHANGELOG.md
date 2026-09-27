@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.11.1 — the liquidity alarm was firing on price falls
+
+A pool's dollar value falls when the token falls, with nothing withdrawn. In a constant-product pool the
+quote reserve scales with the square root of the price, so value ∝ √price:
+
+| price falls | dollar liquidity falls, with nothing withdrawn |
+| --- | --- |
+| 25% | 13% |
+| 50% | 29% |
+| **58%** | **35%** |
+| 75% | 50% |
+
+The 35% threshold was being applied to raw dollar liquidity, so **a 58% price decline announced "someone
+is taking the pool out"** — a false alarm on the most consequential alert in the app, and precisely the
+thing that teaches you to ignore alerts.
+
+Withdrawal is now measured as the **shortfall against what the price move accounts for**, and the message
+says which it is: *"liquidity is 31% below what the price move accounts for … that gap is liquidity being
+withdrawn, not the token repricing."* Where no price is available on either side it falls back to the raw
+comparison and says so, because a possible withdrawal is still worth raising — it just cannot be
+distinguished from a decline. The holdings row reads "31% of liquidity withdrawn" or "liquidity intact"
+instead of a dollar drift with the same ambiguity.
+
+The relationship is exact for constant product and indicative for a concentrated pool, whose value tracks
+the price in a shape that depends on where the ranges sit. The threshold applies to the shortfall, so the
+approximation costs sensitivity rather than creating false alarms. The absolute floor is untouched: below
+$1,000 there is no market, however it got there.
+
 ## 0.11.0 — a time stop, and telling you when a price stop is meaningless
 
 Two additions on the weakest trigger the watcher has.

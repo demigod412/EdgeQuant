@@ -10,7 +10,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, SectionTitle, cn, pct } from "@/components/ui";
 import { HoldingForm, RemoveButton, ScreenForm, StopWatchingButton } from "./tokens/form";
-import { WATCH, stopVerdict, watchAlerts } from "@/lib/token/watchRules";
+import { WATCH, stopVerdict, watchAlerts, withdrawnShare } from "@/lib/token/watchRules";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Token screener" };
@@ -146,7 +146,12 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                 { stopLossPct: h.stopLossPct, maxHoldHours: h.maxHoldHours, heldHours },
               );
               const stop = stopVerdict(h.stopLossPct, h.baseMove);
-              const drift = h.baseLiquidityUsd && h.lastLiquidityUsd != null ? h.lastLiquidityUsd / h.baseLiquidityUsd - 1 : null;
+              // Net of what the price move explains, for the same reason the alert is: raw dollar drift
+              // reads as withdrawal when it is often just the token repricing.
+              const withdrawn = withdrawnShare(
+                { liquidityUsd: h.lastLiquidityUsd, exitCost: h.lastExitCost, sellQuoted: true, topHolderShare: h.lastTopHolder, priceUsd: h.lastPriceUsd },
+                { liquidityUsd: h.baseLiquidityUsd, exitCost: h.baseExitCost, topHolderShare: h.baseTopHolder, priceUsd: h.basePriceUsd },
+              );
               return (
                 <li key={h.id} className="border-b hairline pb-2 last:border-0 last:pb-0">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -167,8 +172,8 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                     <span className="num flex items-center gap-2 text-[11px] text-slate-500">
                       {h.lastExitCost != null && <>exit {pct(h.lastExitCost)}</>}
                       {h.lastTopHolder != null && <>· top holder {pct(h.lastTopHolder)}</>}
-                      {drift != null && <span className={drift < -WATCH.liquidityDropShare ? "text-miss" : drift < 0 ? "text-amber" : "text-edge"}>
-                        liquidity {drift >= 0 ? "+" : ""}{(drift * 100).toFixed(0)}%
+                      {withdrawn != null && <span className={withdrawn > WATCH.liquidityDropShare ? "text-miss" : withdrawn > 0.1 ? "text-amber" : "text-edge"}>
+                        {withdrawn > 0.01 ? `${(withdrawn * 100).toFixed(0)}% of liquidity withdrawn` : "liquidity intact"}
                       </span>}
                       {h.lastCheckedAt ? <>· {fmtWat(h.lastCheckedAt, "HH:mm")}</> : <>· not yet checked</>}
                       <StopWatchingButton id={h.id} />

@@ -107,6 +107,41 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const usd = (x: number) => `$${Math.round(x).toLocaleString("en-US")}`;
 
 /**
+ * How much liquidity a pool should have lost from the price move alone.
+ *
+ * A pool's dollar value falls when the token falls, with nothing withdrawn: in a constant-product pool
+ * the quote reserve scales with the square root of the price, so value ∝ √price. A 58% price fall takes
+ * 35% of the dollar liquidity with it on its own.
+ *
+ * That matters because the naive comparison — dollar liquidity against dollar liquidity — announces
+ * "someone is taking the pool out" on an ordinary decline. It is the most important alert here, and an
+ * alert that fires on price moves is one you learn to ignore.
+ *
+ * Exact for constant product; indicative for a concentrated pool, whose value moves with the price in a
+ * shape that depends on where the ranges sit. The threshold is applied to the SHORTFALL against this
+ * expectation, so the approximation costs sensitivity rather than raising false alarms.
+ */
+export function expectedLiquidity(baseLiquidity: number, basePrice: number, nowPrice: number): number {
+  if (!(basePrice > 0) || !(nowPrice > 0)) return baseLiquidity;
+  return baseLiquidity * Math.sqrt(nowPrice / basePrice);
+}
+
+/**
+ * Liquidity actually withdrawn, as a share, net of what the price explains. Null when it cannot be told.
+ *
+ * Returns 0 rather than a negative number when the pool is deeper than expected: "more liquidity than
+ * the price implies" is not a withdrawal, and a negative figure would only invite arithmetic on it.
+ */
+export function withdrawnShare(obs: Observation, base: Baseline): number | null {
+  if (obs.liquidityUsd == null || !base.liquidityUsd) return null;
+  const expected = base.priceUsd && obs.priceUsd
+    ? expectedLiquidity(base.liquidityUsd, base.priceUsd, obs.priceUsd)
+    : base.liquidityUsd;
+  if (!(expected > 0)) return null;
+  return Math.max(0, 1 - obs.liquidityUsd / expected);
+}
+
+/**
  * Everything worth saying about a holding right now, worst first.
  *
  * A missing measurement never raises an alert: an API that failed is not a pool that drained, and
@@ -127,10 +162,21 @@ export function watchAlerts(
   if (obs.liquidityUsd != null && obs.liquidityUsd < WATCH.liquidityFloorUsd) {
     out.push({ key: "liquidity-gone", severity: "critical",
       line: `Liquidity is ${usd(obs.liquidityUsd)} — there is effectively no market left to sell into.` });
-  } else if (obs.liquidityUsd != null && base.liquidityUsd && obs.liquidityUsd < base.liquidityUsd * (1 - WATCH.liquidityDropShare)) {
-    const gone = 1 - obs.liquidityUsd / base.liquidityUsd;
-    out.push({ key: "liquidity-drop", severity: "critical",
-      line: `Liquidity is down ${pct(gone)} since you opened: ${usd(base.liquidityUsd)} → ${usd(obs.liquidityUsd)}. Someone is taking the pool out.` });
+  } else {
+    /*
+     * Withdrawal, not repricing. Measured against what the price move alone accounts for, so a decline
+     * does not get announced as a rug — see expectedLiquidity. Where no price is available on either
+     * side this falls back to the raw comparison and says so, because a possible withdrawal is still
+     * worth raising; it just cannot be distinguished from a fall.
+     */
+    const withdrawn = withdrawnShare(obs, base);
+    const priced = base.priceUsd != null && obs.priceUsd != null;
+    if (withdrawn != null && withdrawn > WATCH.liquidityDropShare) {
+      out.push({ key: "liquidity-drop", severity: "critical",
+        line: priced
+          ? `Liquidity is ${pct(withdrawn)} below what the price move accounts for: ${usd(base.liquidityUsd!)} → ${usd(obs.liquidityUsd!)} while the price moved ${pct(obs.priceUsd! / base.priceUsd! - 1)}. That gap is liquidity being withdrawn, not the token repricing.`
+          : `Liquidity is down ${pct(withdrawn)} since you opened: ${usd(base.liquidityUsd!)} → ${usd(obs.liquidityUsd!)}. No price was available to tell a withdrawal from a decline, so treat it as the former until you can see which.` });
+    }
   }
 
   // ---- the exit getting expensive ---------------------------------------------------------------

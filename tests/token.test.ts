@@ -6,7 +6,7 @@ import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
-import { WATCH, dueForChainProbe, noiseFloor, shouldSend, stopVerdict, watchAlerts, watchMessage, type Observation } from "@/lib/token/watchRules";
+import { WATCH, dueForChainProbe, expectedLiquidity, noiseFloor, shouldSend, stopVerdict, watchAlerts, watchMessage, withdrawnShare, type Observation } from "@/lib/token/watchRules";
 import { POSITION_LAYOUTS, decodeLock, decodeSpread, lockSlice, spreadSlice, readU128LE, plausible, MAX_PLAUSIBLE_LIQUIDITY } from "@/lib/token/positionLayouts";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
 import { parseRecent, selectCandidates, type Candidate } from "@/lib/token/discover";
@@ -948,5 +948,55 @@ describe("stops, and whether yours means anything", () => {
     const base = { liquidityUsd: 100_000, exitCost: 0.02, topHolderShare: 0.08, priceUsd: 1 };
     const a = watchAlerts(obs, base, { maxHoldHours: 6, heldHours: 7 })[0];
     expect(a.line).toMatch(/Nothing is wrong with it/);
+  });
+});
+
+describe("telling a withdrawal from a price fall", () => {
+  /*
+   * A pool's dollar value falls when the token falls, with nothing withdrawn: value scales with the
+   * square root of the price, so a 58% fall takes 35% of the dollar liquidity with it. Comparing dollars
+   * to dollars announced "someone is taking the pool out" on an ordinary decline — a false alarm on the
+   * single most important trigger here.
+   */
+  const base = { liquidityUsd: 100_000, exitCost: 0.02, topHolderShare: 0.08, priceUsd: 1 };
+  const obs = (over: Partial<Observation> = {}): Observation =>
+    ({ liquidityUsd: 100_000, exitCost: 0.02, sellQuoted: true, topHolderShare: 0.08, priceUsd: 1, ...over });
+  const keys = (o: Observation) => watchAlerts(o, base).map((a) => a.key);
+
+  it("scales the expectation with the square root of the price", () => {
+    expect(expectedLiquidity(100_000, 1, 0.25)).toBeCloseTo(50_000, 0);
+    expect(expectedLiquidity(100_000, 1, 1)).toBeCloseTo(100_000, 0);
+    // A price that doubles should leave a deeper pool, not flag one.
+    expect(expectedLiquidity(100_000, 1, 4)).toBeCloseTo(200_000, 0);
+  });
+
+  it("stays silent when the whole fall is explained by the price", () => {
+    // Price -58%, liquidity -35%: exactly what a constant-product pool does with nothing withdrawn.
+    expect(keys(obs({ priceUsd: 0.42, liquidityUsd: 64_800 }))).not.toContain("liquidity-drop");
+    expect(keys(obs({ priceUsd: 0.25, liquidityUsd: 50_000 }))).not.toContain("liquidity-drop");
+  });
+
+  it("fires when the pool is emptier than the price explains", () => {
+    // Price -50% predicts about $70.7k. Half of that is a withdrawal, not a decline.
+    const alerts = watchAlerts(obs({ priceUsd: 0.5, liquidityUsd: 35_000 }), base);
+    expect(alerts.map((a) => a.key)).toContain("liquidity-drop");
+    expect(alerts.find((a) => a.key === "liquidity-drop")!.line).toMatch(/not the token repricing/);
+  });
+
+  it("does not read a deeper pool as a withdrawal", () => {
+    expect(withdrawnShare(obs({ priceUsd: 2, liquidityUsd: 200_000 }), base)).toBe(0);
+    expect(keys(obs({ priceUsd: 2, liquidityUsd: 141_000 }))).not.toContain("liquidity-drop");
+  });
+
+  it("falls back to the raw comparison when no price is available, and says so", () => {
+    const alerts = watchAlerts(obs({ priceUsd: null, liquidityUsd: 40_000 }), { ...base, priceUsd: null });
+    const drop = alerts.find((a) => a.key === "liquidity-drop")!;
+    expect(drop).toBeTruthy();
+    expect(drop.line).toMatch(/No price was available/);
+  });
+
+  it("still calls an empty pool empty, whatever the price did", () => {
+    // The absolute floor is not a comparison: below it there is no market, however it got there.
+    expect(keys(obs({ priceUsd: 0.001, liquidityUsd: 400 }))).toContain("liquidity-gone");
   });
 });
