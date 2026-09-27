@@ -29,6 +29,13 @@ export interface EntryRating {
   verdict: string;
   /** Everything keeping it below strong. Empty only when strong. */
   holdingBack: string[];
+  /**
+   * What is actually in its favour, in plain terms.
+   *
+   * A list of only negatives reads as a verdict on the token when it is really a list of open questions,
+   * and it gives no way to tell a token with one blemish from one with nothing going for it.
+   */
+  strengths: string[];
   /** Concrete things that would raise it — including ones you control, like position size. */
   wouldRaise: string[];
   /** Round-trip cost at the screened size, for ranking. Null when no quote came back. */
@@ -57,6 +64,7 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export function rateEntry(checks: CheckResult[], grade: ScreenGrade, t: TokenSnapshot): EntryRating {
   const holdingBack: string[] = [];
+  const strengths: string[] = [];
   const wouldRaise: string[] = [];
 
   const exitCost = t.sellQuote ? 1 - t.sellQuote.probeOut / Math.max(1e-9, t.sellQuote.probeIn) : null;
@@ -66,6 +74,7 @@ export function rateEntry(checks: CheckResult[], grade: ScreenGrade, t: TokenSna
   // ---- disqualifying, and nothing else matters --------------------------------------------------
   if (grade.hardFails.length) {
     return {
+      strengths: [],
       rating: "avoid",
       verdict: `Do not buy. ${grade.hardFails.length === 1 ? "A check that disqualifies on its own has failed" : "Checks that disqualify on their own have failed"}: ${grade.hardFails.map((c) => c.label.toLowerCase()).join(", ")}.`,
       holdingBack: grade.hardFails.map((c) => c.detail),
@@ -106,8 +115,11 @@ export function rateEntry(checks: CheckResult[], grade: ScreenGrade, t: TokenSna
    * before it is yours, and no check in the nine notices — concentration measures the SHARE they hold,
    * not what that share is worth against the market it would hit.
    */
-  const queue = readOverhang(overhang(t));
-  if (queue.level === "severe" || queue.level === "warn") holdingBack.push(...queue.lines);
+  const queue = readOverhang(overhang(t), t);
+  for (const r of queue.readings) {
+    if (r.tone === "bad") holdingBack.push(r.line);
+    else if (r.tone === "good") strengths.push(r.line);
+  }
 
   if (grade.coverage < RATING.mediumCoverage) {
     holdingBack.push(`Only ${pct(grade.coverage)} of the checks could be evaluated, so most of this verdict is missing information rather than findings.`);
@@ -136,7 +148,18 @@ export function rateEntry(checks: CheckResult[], grade: ScreenGrade, t: TokenSna
         : `Weak. ${grade.unknownHard.length ? `${grade.unknownHard.length} critical check${grade.unknownHard.length === 1 ? "" : "s"} could not be run, so you would be buying with the most important question${grade.unknownHard.length === 1 ? "" : "s"} unanswered.` : "Too much is wrong or unmeasured to call this a considered entry."} Unknown is not the same as fine.`;
 
   if (rating === "strong" && !wouldRaise.length) wouldRaise.push("Nothing on the risk side. What remains is price, which this tool does not measure.");
-  return { rating, verdict, holdingBack, wouldRaise, exitCost, depthMultiple };
+
+  // The plain positives, so the card is a balance rather than a charge sheet.
+  for (const c of checks) {
+    if (c.verdict !== "pass") continue;
+    if (c.id === "lpLocked") strengths.push("The liquidity cannot be withdrawn from under you.");
+    if (c.id === "mintAuthority") strengths.push("No more supply can be printed.");
+    if (c.id === "freezeAuthority") strengths.push("Your account cannot be frozen.");
+  }
+  if (exitStrong && exitCost != null) strengths.push(`Getting out costs ${pct(exitCost)} at ${size ? `$${size}` : "this size"}.`);
+  if (depthStrong && depthMultiple != null) strengths.push(`The pool is ${depthMultiple.toFixed(0)}× your position, so the quote means something.`);
+
+  return { rating, verdict, holdingBack, strengths, wouldRaise, exitCost, depthMultiple };
 }
 
 /** Ranking order, for putting the best-cleared screens at the top of a list. */

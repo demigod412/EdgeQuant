@@ -55,6 +55,16 @@ export interface ScreenGrade {
 const WEIGHT: Record<string, number> = {
   mintAuthority: 18, freezeAuthority: 18, sellable: 18, lpLocked: 16,
   sniperBundle: 10, deployerHistory: 8, concentration: 6, transferRules: 4, liquidityDepth: 2,
+  /*
+   * The queue to sell. Weighted above concentration because it measures something concentration cannot:
+   * a token can pass at 20% of supply held and still have five times the pool sitting above you, and it
+   * is the dollar value against the market — not the share — that decides whether you can get out.
+   *
+   * The total is computed from whatever checks are present rather than fixed at 100, so adding this
+   * rescales every score. Old screens keep their own weights, which is the point of storing checks with
+   * the screen rather than recomputing history.
+   */
+  sellPressure: 10,
 };
 
 export function gradeScreen(checks: CheckResult[]): ScreenGrade {

@@ -141,4 +141,4 @@ export interface CheckResult {
 export type CheckId =
   | "mintAuthority" | "freezeAuthority" | "transferRules"
   | "lpLocked" | "liquidityDepth"
-  | "concentration" | "deployerHistory" | "sniperBundle" | "sellable";
+  | "concentration" | "deployerHistory" | "sniperBundle" | "sellable" | "sellPressure";

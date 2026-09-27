@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { runChecks, LIMITS } from "@/lib/token/checks";
 import { gradeScreen, survivalProbability, SURVIVAL_MIN_SETTLED } from "@/lib/token/score";
 import { rateEntry, byClearance } from "@/lib/token/rating";
-import { overhang, readOverhang } from "@/lib/token/overhang";
+import { breakEvenCap, overhang, readOverhang } from "@/lib/token/overhang";
 import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
-import { WATCH, dueForChainProbe, expectedLiquidity, noiseFloor, shouldSend, stopVerdict, watchAlerts, watchMessage, withdrawnShare, type Observation } from "@/lib/token/watchRules";
+import { WATCH, dueForChainProbe, expectedLiquidity, noiseFloor, positionVerdict, shouldSend, stopVerdict, watchAlerts, watchMessage, withdrawnShare, type Observation } from "@/lib/token/watchRules";
 import { POSITION_LAYOUTS, decodeLock, decodeSpread, lockSlice, spreadSlice, readU128LE, plausible, MAX_PLAUSIBLE_LIQUIDITY } from "@/lib/token/positionLayouts";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
 import { parseRecent, selectCandidates, type Candidate } from "@/lib/token/discover";
@@ -280,13 +280,15 @@ describe("the score saturates when the same checks are unavailable", () => {
     const a = gradeScreen(runChecks(blind({ liquidityUsd: 328_386, top10Share: 0.217, topHolderShare: 0.084 })));
     const b = gradeScreen(runChecks(blind({ liquidityUsd: 1_911_123, top10Share: 0.149, topHolderShare: 0.027 })));
     expect(a.safety).toBe(b.safety);
-    expect(a.safety).toBe(66);
+    // Ten checks weigh 110 in total and the same 34 are unreadable, so the shared figure is now 69.
+    // The point of the test is the two being equal, not the number itself.
+    expect(a.safety).toBe(69);
   });
 
   it("reports coverage so a 66 of that kind is distinguishable from a 66 with findings", () => {
     const g = gradeScreen(runChecks(blind()));
-    expect(g.counts).toEqual({ pass: 6, warn: 0, fail: 0, unknown: 3 });
-    expect(g.coverage).toBeCloseTo(0.66, 2);
+    expect(g.counts).toEqual({ pass: 7, warn: 0, fail: 0, unknown: 3 });
+    expect(g.coverage).toBeCloseTo(0.69, 2);
     expect(g.grade).toBe("unproven");
 
     const full = gradeScreen(runChecks(clean()));
@@ -500,16 +502,17 @@ describe("bugs the first fresh-token screens exposed", () => {
      * directly above a FAIL in the list.
      */
     const g = gradeScreen(runChecks(clean({ top10Share: 0.9, topHolderShare: 0.8 })));
-    expect(g.softFails.map((c) => c.id)).toEqual(["concentration"]);
+    // 90% of a $900k cap above a $30k pool fails the queue as well, which is right.
+    expect(g.softFails.map((c) => c.id)).toContain("concentration");
     expect(g.grade).toBe("caution");
     expect(g.grade).not.toBe("clear");
-    expect(g.headline).toMatch(/check fails/);
+    expect(g.headline).toMatch(/checks? fails?/);
     expect(g.headline).not.toMatch(/No disqualifying findings/);
     expect(g.headline).not.toMatch(/All checks cleared/);
   });
 
   it("still says nothing-disqualifying when only warnings are present", () => {
-    const g = gradeScreen(runChecks(clean({ liquidityUsd: 9_000 })));
+    const g = gradeScreen(runChecks(clean({ liquidityUsd: 9_000, marketCapUsd: 20_000 })));
     expect(g.grade).toBe("caution");
     expect(g.softFails).toEqual([]);
     expect(g.headline).toMatch(/No disqualifying findings/);
@@ -1030,7 +1033,7 @@ describe("the queue to sell", () => {
 
   it("never claims to know anyone's profit", () => {
     const r = readOverhang(overhang(snap({ lpLockedShare: 0.2 })));
-    const all = r.lines.join(" ");
+    const all = r.readings.map((x) => x.line).join(" ");
     expect(all).toMatch(/not profit/);
     // And says whose the locked liquidity may not be, since on a curve launch it came from buyers.
     expect(all).toMatch(/not necessarily theirs/);
@@ -1062,5 +1065,106 @@ describe("the queue to sell", () => {
 
   it("reports nothing rather than guessing when the inputs are missing", () => {
     expect(readOverhang(overhang(snap({ marketCapUsd: null, fdvUsd: null }))).level).toBe("unknown");
+  });
+});
+
+describe("break-even, and reading it as a signal in your favour", () => {
+  /*
+   * The requested comparison, made rigorous. Not `locked / share`: the locked liquidity is itself priced
+   * in dollars and grows with the token, since a pool's value scales with the square root of the price.
+   * Solving cap·s = L₀·√(cap/cap₀) gives cap = L₀²/(s²·cap₀).
+   */
+  it("solves for the cap where sellable value equals locked value", () => {
+    const be = breakEvenCap(10_000, 0.2, 48_000)!;
+    expect(be).toBeCloseTo(52_083, 0);
+    // Check it by evaluating both sides at that cap.
+    const sellable = be * 0.2;
+    const locked = 10_000 * Math.sqrt(be / 48_000);
+    expect(sellable).toBeCloseTo(locked, 2);
+  });
+
+  it("does not use the naive locked/share, which understates it", () => {
+    // The naive form gives 50,000 here; the gap widens the further away break-even is, which is exactly
+    // when the number is being relied upon.
+    expect(breakEvenCap(10_000, 0.2, 48_000)!).toBeGreaterThan(10_000 / 0.2);
+  });
+
+  it("returns null rather than infinity when nothing is locked or nothing is held", () => {
+    expect(breakEvenCap(0, 0.2, 48_000)).toBeNull();
+    expect(breakEvenCap(10_000, 0, 48_000)).toBeNull();
+    expect(breakEvenCap(10_000, 0.2, 0)).toBeNull();
+  });
+
+  it("passes the check, and says how far the cap must run, when the top is below break-even", () => {
+    // $48k cap, 20% held = $9.6k sellable, against $10k locked: nobody at the top has recovered it.
+    const t = clean({ marketCapUsd: 48_000, liquidityUsd: 10_000, top10Share: 0.2, lpLockedShare: 1, deployerHoldShare: 0 });
+    const c = find(t, "sellPressure");
+    expect(c.verdict).toBe("pass");
+    expect(c.detail).toMatch(/before dumping realised more than was given up/);
+    const good = readOverhang(overhang(t), t).readings.find((r) => r.tone === "good" && /below what is locked/.test(r.line))!;
+    expect(good.line).toMatch(/would have to reach about \$52/);
+    expect(good.line).toMatch(/% above the present/);
+    // And it is honest that this is temporary.
+    expect(good.line).toMatch(/expires as the cap rises/);
+  });
+
+  it("stops crediting it once the cap has passed break-even", () => {
+    const t = clean({ marketCapUsd: 2_000_000, liquidityUsd: 10_000, top10Share: 0.2, lpLockedShare: 1 });
+    const readings = readOverhang(overhang(t), t).readings;
+    expect(readings.some((r) => r.tone === "good" && /below what is locked/.test(r.line))).toBe(false);
+    expect(readings.some((r) => /more extractable than is genuinely committed/.test(r.line))).toBe(true);
+  });
+
+  it("refuses to read an empty deployer wallet as reassurance", () => {
+    // The creator who intends to sell rarely does it from the wallet that deployed; they show up as an
+    // ordinary holder. Treating a 0% deployer balance as safety is the mistake this prevents.
+    const t = clean({ marketCapUsd: 1_000_000, liquidityUsd: 100_000, top10Share: 0.1, lpLockedShare: 1,
+      deployerHoldShare: 0, sniperBundleShare: 0.12 });
+    const line = readOverhang(overhang(t), t).readings.find((r) => /deployer/.test(r.line))!;
+    expect(line.tone).not.toBe("good");
+    expect(line.line).toMatch(/not reassurance/);
+    expect(line.line).toMatch(/rarely does it from the wallet that deployed/);
+    // And points at the opening-blocks figure as the closest available tell.
+    expect(line.line).toMatch(/12\.0% of supply went to wallets in the opening slots/);
+  });
+
+  it("lists what is in a token's favour, not only what is against it", () => {
+    const t = clean({ sellProbeUsd: 500, liquidityUsd: 40_000, marketCapUsd: 150_000,
+      sellQuote: { probeIn: 500e6, probeOut: 495e6 }, sellPriceImpact: 0.01 });
+    const checks = runChecks(t);
+    const r = rateEntry(checks, gradeScreen(checks), t);
+    expect(r.strengths.join(" ")).toMatch(/liquidity cannot be withdrawn/);
+    expect(r.strengths.join(" ")).toMatch(/No more supply can be printed/);
+  });
+});
+
+describe("what to do about a position you already hold", () => {
+  const alert = (key: string, severity: "critical" | "warning") => ({ key, severity, line: `${key} happened.` });
+
+  it("says sell out when the exit itself is closing", () => {
+    const v = positionVerdict([alert("exit-blocked", "critical")], {});
+    expect(v.action).toBe("exit");
+    // And is explicit that this is not a price call.
+    expect(v.line).toMatch(/about the exit closing, not about the price/);
+  });
+
+  it("distinguishes your own rule from a finding about the token", () => {
+    const v = positionVerdict([alert("time-stop", "critical")], {});
+    expect(v.action).toBe("exit");
+    expect(v.line).toMatch(/Your rule, not a finding about the token/);
+  });
+
+  it("says trim it when the room to leave is shrinking", () => {
+    const v = positionVerdict([], { withdrawn: 0.2 });
+    expect(v.action).toBe("reduce");
+    expect(v.line).toMatch(/room to leave is shrinking/);
+    expect(positionVerdict([], { queueLevel: "severe" }).action).toBe("reduce");
+    expect(positionVerdict([], { exitCost: 0.3 }).action).toBe("reduce");
+  });
+
+  it("says keep holding when nothing structural has changed, and says what that excludes", () => {
+    const v = positionVerdict([], { queueLevel: "ok", withdrawn: 0, exitCost: 0.02 });
+    expect(v.action).toBe("hold");
+    expect(v.line).toMatch(/says nothing about where the price is going/);
   });
 });

@@ -11,7 +11,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, SectionTitle, cn, pct } from "@/components/ui";
 import { HoldingForm, RemoveButton, ScreenForm, StopWatchingButton } from "./tokens/form";
-import { WATCH, stopVerdict, watchAlerts, withdrawnShare } from "@/lib/token/watchRules";
+import { WATCH, positionVerdict, stopVerdict, watchAlerts, withdrawnShare, type Action } from "@/lib/token/watchRules";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Token screener" };
@@ -33,6 +33,12 @@ const RATING_STYLE: Record<Rating, string> = {
   avoid: "border-miss/60 bg-miss/15 text-miss",
 };
 const usd = (x: number) => `$${Math.round(x).toLocaleString("en-US")}`;
+const ACTION_STYLE: Record<Action, string> = {
+  exit: "border-miss/60 bg-miss/15 text-miss",
+  reduce: "border-amber/60 bg-amber/10 text-amber",
+  hold: "border-edge/50 bg-edge/10 text-edge",
+};
+const ACTION_WORD: Record<Action, string> = { exit: "Sell out", reduce: "Trim it", hold: "Keep holding" };
 
 /** Compact money, because a market cap is read at a glance and $1,240,000 is four glances. */
 function money(x: number): string {
@@ -165,6 +171,8 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                 { liquidityUsd: h.lastLiquidityUsd, exitCost: h.lastExitCost, sellQuoted: true, topHolderShare: h.lastTopHolder, priceUsd: h.lastPriceUsd },
                 { liquidityUsd: h.baseLiquidityUsd, exitCost: h.baseExitCost, topHolderShare: h.baseTopHolder, priceUsd: h.basePriceUsd },
               );
+              // Everything above, translated into what to do about a position you are already in.
+              const verdict = positionVerdict(alerts, { queueLevel: queueRead.level, withdrawn, exitCost: h.lastExitCost });
               return (
                 <li key={h.id} className="border-b hairline pb-2 last:border-0 last:pb-0">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -177,6 +185,7 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                         {h.stopLossPct ? <span className={stop.inNoise ? "text-amber" : ""}> · stop {(h.stopLossPct * 100).toFixed(0)}%</span> : null}
                         {h.maxHoldHours ? ` · ${heldHours.toFixed(1)}/${h.maxHoldHours}h` : ` · held ${heldHours.toFixed(1)}h`}
                       </span>
+                      <span className={cn("ml-2 inline-flex rounded-full border px-2 py-0.5 text-[10px]", ACTION_STYLE[verdict.action])}>{ACTION_WORD[verdict.action]}</span>
                       <span className="ml-2 text-[11px]">
                         {/* The live figure where the batch found one; otherwise what the last scan saw. */}
                         <CapMove then={h.baseMarketCapUsd} now={capsNow.get(h.mint) ?? h.lastMarketCapUsd} />
@@ -192,6 +201,7 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                       <StopWatchingButton id={h.id} />
                     </span>
                   </div>
+                  <p className={cn("mt-1 text-[11px] leading-relaxed", verdict.action === "exit" ? "text-miss" : verdict.action === "reduce" ? "text-amber" : "text-slate-400")}>{verdict.line}</p>
                   {alerts.length > 0 && (
                     <ul className="mt-1 space-y-0.5">
                       {alerts.map((a) => (
@@ -201,9 +211,9 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                   )}
                   {/* Said where the stop can still be changed, rather than discovered when it misfires. */}
                   {stop.inNoise && <p className="mt-1 text-[11px] text-amber">· {stop.note}</p>}
-                  {queueRead.lines.length > 0 && (
-                    <p className={cn("mt-1 text-[11px]", queueRead.level === "severe" ? "text-miss" : queueRead.level === "warn" ? "text-amber" : "text-slate-500")}>
-                      · {queueRead.lines[0]}
+                  {queueRead.readings.length > 0 && (
+                    <p className={cn("mt-1 text-[11px]", queueRead.readings[0].tone === "bad" ? "text-miss" : queueRead.readings[0].tone === "good" ? "text-edge" : "text-slate-500")}>
+                      · {queueRead.readings[0].line}
                       {queue.exitableUsd != null && h.sizeUsd > queue.exitableUsd && (
                         <> Your {usd(h.sizeUsd)} is above the {usd(queue.exitableUsd)} this pool can absorb without the quote losing meaning.</>
                       )}
@@ -387,9 +397,17 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                 {rating && (
                   <div className="mb-3 rounded-lg border hairline bg-black/20 p-3">
                     <p className="text-[12px] leading-relaxed text-slate-300">{rating.verdict}</p>
+                    {rating.strengths.length > 0 && (
+                      <>
+                        <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">In its favour</p>
+                        <ul className="mt-0.5 space-y-0.5">
+                          {rating.strengths.map((h, i) => <li key={i} className="text-[11px] text-edge/90">· {h}</li>)}
+                        </ul>
+                      </>
+                    )}
                     {rating.holdingBack.length > 0 && (
                       <>
-                        <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">Holding it back</p>
+                        <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">Against it</p>
                         <ul className="mt-0.5 space-y-0.5">
                           {rating.holdingBack.map((h, i) => <li key={i} className="text-[11px] text-slate-400">· {h}</li>)}
                         </ul>
@@ -409,14 +427,16 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                   const snap = parseSnapshot(s.snapshot);
                   if (!snap) return null;
                   const o = overhang(snap);
-                  const r = readOverhang(o);
-                  if (!r.lines.length && o.exitableUsd == null) return null;
+                  const r = readOverhang(o, snap);
+                  if (!r.readings.length && o.exitableUsd == null) return null;
                   return (
                     <div className="mb-3 rounded-lg border hairline bg-black/20 p-3">
                       <p className="text-[10px] uppercase tracking-wide text-slate-500">The queue to sell</p>
                       <ul className="mt-1 space-y-1">
-                        {r.lines.map((line, i) => (
-                          <li key={i} className={cn("text-[11px] leading-relaxed", i === 0 && r.level === "severe" ? "text-miss" : i === 0 && r.level === "warn" ? "text-amber" : "text-slate-400")}>· {line}</li>
+                        {r.readings.map((rd, i) => (
+                          <li key={i} className={cn("text-[11px] leading-relaxed", rd.tone === "bad" ? "text-miss" : rd.tone === "good" ? "text-edge" : "text-slate-400")}>
+                            <span className="mr-1 font-semibold">{rd.tone === "bad" ? "against you:" : rd.tone === "good" ? "in your favour:" : "for context:"}</span>{rd.line}
+                          </li>
                         ))}
                         {o.exitableUsd != null && (
                           <li className="text-[11px] text-ice/80">· A position up to about {usd(o.exitableUsd)} leaves this pool deep enough for its quoted exit to mean something.</li>

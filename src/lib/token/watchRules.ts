@@ -242,6 +242,48 @@ export function shouldSend(
   return now.getTime() - last.at.getTime() >= WATCH.repeatAfterHours * 3600_000;
 }
 
+export type Action = "exit" | "reduce" | "hold";
+
+/**
+ * What the measurements say to do about a position you are already in.
+ *
+ * Built only from structural facts: can you still sell, is the pool still there, is the queue above you
+ * getting worse. Deliberately NOT from the price — the app does not forecast one, and "the price fell"
+ * is not a reason this tool is entitled to give. So this answers "can I still get out, and is that
+ * getting harder", which is a narrower question than "should I sell" and the only one it can answer
+ * honestly. The wording says as much.
+ */
+export function positionVerdict(
+  alerts: WatchAlert[],
+  opts: { queueLevel?: "severe" | "warn" | "ok" | "unknown"; withdrawn?: number | null; exitCost?: number | null },
+): { action: Action; line: string } {
+  const critical = alerts.filter((a) => a.severity === "critical");
+  if (critical.length) {
+    const own = critical.some((a) => a.key === "stop-loss" || a.key === "time-stop");
+    const structural = critical.filter((a) => a.key !== "stop-loss" && a.key !== "time-stop");
+    if (structural.length) {
+      return { action: "exit",
+        line: `Get out if you still can. ${structural[0].line} This is about the exit closing, not about the price.` };
+    }
+    return { action: "exit",
+      line: own ? `${critical[0].line} Your rule, not a finding about the token — nothing structural has changed.` : critical[0].line };
+  }
+
+  const gettingWorse = (opts.withdrawn != null && opts.withdrawn > 0.1)
+    || opts.queueLevel === "severe"
+    || (opts.exitCost != null && opts.exitCost > 0.15);
+  if (gettingWorse) {
+    return { action: "reduce",
+      line: "Your exit is getting worse rather than the token going wrong. Nothing here disqualifies it, but the room to leave is shrinking, so a smaller position is easier to get out of than this one." };
+  }
+  if (alerts.length) {
+    return { action: "hold",
+      line: "Worth reading, nothing urgent. The pool is intact and a sale still quotes at your size." };
+  }
+  return { action: "hold",
+    line: "Nothing structural has changed since you opened it: the pool is intact, a sale still quotes at your size, and no one has moved ahead of you. This says nothing about where the price is going." };
+}
+
 /** The message body, for Telegram. */
 export function watchMessage(a: { symbol: string | null; mint: string; sizeUsd: number; alerts: WatchAlert[] }) {
   const worst = a.alerts[0]?.severity === "critical" ? "⚠️ <b>Act now</b>" : "<b>Worth a look</b>";

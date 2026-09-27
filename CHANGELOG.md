@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.13.0 — a tenth check, break-even, and plain verdicts
+
+### The queue to sell is now a check, and its favourable case counts
+`sellPressure`, weight **10** — above concentration, because concentration measures the *share* those
+wallets hold and says nothing about what that share is worth against the market it would hit. A token can
+pass at 20% held and still have five times the pool sitting above you.
+
+The good case is a real **pass**, not a neutral absence of findings: while sellable value is below what is
+locked, the top of the queue realises less by selling than it gave up, so for now it gains nothing by
+leaving. That is the one genuinely reassuring reading in the whole screener — and it is credited as such.
+
+Scores rescale, because the total is computed from whatever checks are present rather than fixed at 100.
+The saturated figure that was 66 is now 69. Stored screens keep their own weights, which is why checks
+are stored with the screen instead of recomputed from history.
+
+### The cap it has to reach
+Not `locked ÷ share`. Locked liquidity is itself priced in dollars and grows as the token does — a pool's
+value scales with the square root of the price — so solving `cap·s = L₀·√(cap/cap₀)` gives
+**`cap = L₀² / (s² · cap₀)`**. The naive form understates it, and the gap widens the further away
+break-even is, which is exactly when the number is being relied on.
+
+Shown as both the cap and the distance: *"the cap would have to reach about $52.1K — 9% above the present
+$48K — before dumping realised more than was given up."* Under 70% of the way there it reads as
+comfortable; nearer than that it says the alignment expires on the next leg up.
+
+### A creator appearing as a third-party holder
+Your point, and it was right. **An empty deployer wallet is not reassurance** — a creator who means to
+sell rarely does it from the wallet that deployed; they show up as an ordinary holder. That reading now
+says so outright, points at the ten-largest figure as the one that matters *whoever those wallets belong
+to*, and where an opening-block cluster took a real share of supply, names it as the closest available
+tell.
+
+### Positive or negative, in words
+Every queue reading now carries its sense and is labelled **in your favour** / **against you** / **for
+context**. The rating card gained an **In its favour** list beside what is against it — a page of only
+negatives reads as a verdict when it is really a list of open questions.
+
+And each holding carries a verdict: **Keep holding**, **Trim it**, or **Sell out**, with the reasoning.
+Built only from structural facts — can you still sell, is the pool still there, is the queue worsening —
+and never from the price, because "the price fell" is not a reason this tool is entitled to give. A stop
+firing is labelled as *your* rule rather than a finding about the token.
+
+### Meteora DLMM: still not covered, and why
+Three attempts at its `PositionV2` layout from the program source and published IDLs all came up empty,
+and its positions are variable-sized, so a `dataSize` filter cannot target them either. It continues to
+report as unmeasured, which is true. Unblocking it needs the verbatim field list — nothing else.
+
 ## 0.12.0 — the queue to sell
 
 Your idea, with the one correction it needed. What the top holders **paid** is not on chain, so their

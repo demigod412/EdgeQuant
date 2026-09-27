@@ -1,4 +1,5 @@
 import type { CheckResult, TokenSnapshot, Verdict } from "./types";
+import { OVERHANG, money, overhang } from "./overhang";
 
 /*
  * The nine checks. Each is a pure function of the snapshot so it can be unit-tested and, later, scored
@@ -173,6 +174,34 @@ export function runChecks(t: TokenSnapshot): CheckResult[] {
   else if (t.sniperBundleShare > LIMITS.warnSniperShare)
     add("sniperBundle", "Opening blocks", "warn", `${pct(t.sniperBundleShare)} of supply taken by ${t.sniperWallets ?? "several"} wallet${t.sniperWallets === 1 ? "" : "s"} in the first ${t.openingSlots ?? 60} slots.`);
   else add("sniperBundle", "Opening blocks", "pass", `${pct(t.sniperBundleShare)} of supply taken in the first ${t.openingSlots ?? 60} slots.`);
+
+  // ---- 10. the queue to sell ---------------------------------------------------------------------
+  /*
+   * What the wallets above you could sell, against the market they would sell it into and against what
+   * was irrevocably committed. Nothing else here notices it: concentration measures the SHARE held, not
+   * what that share is worth.
+   *
+   * The favourable case is a real pass rather than a neutral absence of findings. Below break-even the
+   * top of the queue realises less by selling than it gave up, so for the moment it gains nothing by
+   * leaving. That is worth crediting — and worth saying it expires as the cap rises.
+   */
+  {
+    const o = overhang(t);
+    if (o.timesPool == null) out.push(unknown("sellPressure", "Queue to sell", "Holdings, cap or pool depth unavailable, so what sits above you could not be valued."));
+    else if (o.timesPool >= OVERHANG.severeTimesPool)
+      add("sellPressure", "Queue to sell", "fail", `The ten largest wallets hold ${money(o.sellableUsd!)} against a ${money(o.poolUsd!)} pool — ${o.timesPool.toFixed(1)}× the market they would sell into. They cannot all exit at these prices and you are behind them.`);
+    else if (o.timesPool >= OVERHANG.warnTimesPool)
+      add("sellPressure", "Queue to sell", "warn", `${money(o.sellableUsd!)} sits above you against a ${money(o.poolUsd!)} pool — ${o.timesPool.toFixed(1)}× the market.`);
+    else if (o.towardsBreakEven != null && o.towardsBreakEven < 1 && o.breakEvenCapUsd != null) {
+      // Below break-even at all is the favourable case; how far below decides how much it is worth.
+      const comfortable = o.towardsBreakEven < OVERHANG.wellBelowBreakEven;
+      add("sellPressure", "Queue to sell", "pass",
+        `Only ${o.timesPool.toFixed(1)}× the pool sits above you, and sellable value is still below what is locked — the cap would need about ${money(o.breakEvenCapUsd)} before dumping realised more than was given up. `
+        + (comfortable ? "Comfortably below for now, and in your favour while it lasts." : "Only just below, so that alignment expires on the next leg up."));
+    }
+    else
+      add("sellPressure", "Queue to sell", "pass", `${money(o.sellableUsd!)} sits above you against a ${money(o.poolUsd!)} pool — ${o.timesPool.toFixed(1)}× the market, small enough not to define the exit by itself.`);
+  }
 
   // ---- 9. can you actually sell ------------------------------------------------------------------
   if (!t.sellQuote) out.push(unknown("sellable", "Sell simulation", "No sell quote returned — treat as unproven, not as safe.", true));
