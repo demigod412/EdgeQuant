@@ -101,7 +101,7 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
           <ul className="mb-3 space-y-2">
             {holdings.map((h) => {
               const alerts = watchAlerts(
-                { liquidityUsd: h.lastLiquidityUsd, exitCost: h.lastExitCost, sellQuoted: true, topHolderShare: null, priceUsd: h.lastPriceUsd },
+                { liquidityUsd: h.lastLiquidityUsd, exitCost: h.lastExitCost, sellQuoted: true, topHolderShare: h.lastTopHolder, priceUsd: h.lastPriceUsd },
                 { liquidityUsd: h.baseLiquidityUsd, exitCost: h.baseExitCost, topHolderShare: h.baseTopHolder, priceUsd: h.basePriceUsd },
                 { stopLossPct: h.stopLossPct },
               );
@@ -117,6 +117,7 @@ export default async function Tokens({ searchParams }: { searchParams: Promise<{
                     </span>
                     <span className="num flex items-center gap-2 text-[11px] text-slate-500">
                       {h.lastExitCost != null && <>exit {pct(h.lastExitCost)}</>}
+                      {h.lastTopHolder != null && <>· top holder {pct(h.lastTopHolder)}</>}
                       {drift != null && <span className={drift < -WATCH.liquidityDropShare ? "text-miss" : drift < 0 ? "text-amber" : "text-edge"}>
                         liquidity {drift >= 0 ? "+" : ""}{(drift * 100).toFixed(0)}%
                       </span>}

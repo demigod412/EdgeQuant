@@ -6,7 +6,7 @@ import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
-import { shouldSend, watchAlerts, watchMessage, type Observation } from "@/lib/token/watchRules";
+import { WATCH, dueForChainProbe, shouldSend, watchAlerts, watchMessage, type Observation } from "@/lib/token/watchRules";
 import { POSITION_LAYOUTS, decodeLock, decodeSpread, lockSlice, spreadSlice, readU128LE, plausible, MAX_PLAUSIBLE_LIQUIDITY } from "@/lib/token/positionLayouts";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
 import { parseRecent, selectCandidates, type Candidate } from "@/lib/token/discover";
@@ -863,5 +863,38 @@ describe("watching a holding", () => {
     expect(m).toMatch(/Act now/);
     expect(m).toMatch(/\$500 position/);
     expect(m).toContain("abc");
+  });
+});
+
+describe("the chain probe runs on its own slower cadence", () => {
+  const now = new Date("2026-09-27T12:00:00Z");
+  const ago = (min: number) => new Date(now.getTime() - min * 60_000);
+
+  it("reads the chain when it never has, and then only every half hour", () => {
+    // Everything else in the fast loop is keyless and free; this one costs RPC calls, and accumulation
+    // is not a five-minute event. So it gets its own cadence rather than being dropped or run hot.
+    expect(dueForChainProbe(null, now)).toBe(true);
+    expect(dueForChainProbe(ago(5), now)).toBe(false);
+    expect(dueForChainProbe(ago(29), now)).toBe(false);
+    expect(dueForChainProbe(ago(30), now)).toBe(true);
+    expect(dueForChainProbe(ago(120), now)).toBe(true);
+  });
+
+  it("costs little enough for a real portfolio", () => {
+    // Three RPC calls per holding per probe. At half-hourly that is ~144 a day per position.
+    const perDay = (24 * 60) / WATCH.chainProbeMinutes * 3;
+    expect(perDay).toBeLessThan(200);
+  });
+
+  it("still fires the concentration trigger on a carried-forward figure", () => {
+    // Between chain reads the last value is reused: the condition it describes is still true, and the
+    // alert de-duplication is what stops a standing warning becoming a stream of them.
+    const alerts = watchAlerts(
+      { liquidityUsd: 100_000, exitCost: 0.02, sellQuoted: true, topHolderShare: 0.25, priceUsd: 1 },
+      { liquidityUsd: 100_000, exitCost: 0.02, topHolderShare: 0.08, priceUsd: 1 },
+    );
+    expect(alerts.map((a) => a.key)).toContain("concentration-rise");
+    const first = alerts.find((a) => a.key === "concentration-rise")!;
+    expect(shouldSend(first, { key: "concentration-rise", at: ago(5), severity: "warning" }, now)).toBe(false);
   });
 });

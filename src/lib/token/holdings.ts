@@ -1,8 +1,8 @@
 import "server-only";
 import type { PrismaClient } from "@prisma/client";
-import { readPairs, simulateSell } from "./sources";
+import { readHolders, readPairs, simulateSell } from "./sources";
 import { screenToken } from "./ledger";
-import { shouldSend, watchAlerts, watchMessage, type Baseline, type Observation, type Severity } from "./watchRules";
+import { dueForChainProbe, shouldSend, watchAlerts, watchMessage, type Baseline, type Observation, type Severity } from "./watchRules";
 
 /*
  * Watching what you actually hold.
@@ -54,7 +54,7 @@ export async function closeHolding(db: PrismaClient, id: string) {
 export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {}) {
   const now = opts.now ?? new Date();
   const open = await db.tokenHolding.findMany({ where: { closedAt: null }, orderBy: { openedAt: "asc" } });
-  const report: { mint: string; alerts: number; sent: boolean; note?: string }[] = [];
+  const report: { mint: string; alerts: number; sent: boolean; chainRead?: boolean; note?: string }[] = [];
 
   for (const h of open) {
     try {
@@ -62,12 +62,34 @@ export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {})
       const sell = await simulateSell(h.mint, null, h.sizeUsd).catch(() => null);
       const exitCost = sell?.sellQuote ? 1 - sell.sellQuote.probeOut / Math.max(1e-9, sell.sellQuote.probeIn) : null;
 
+      /*
+       * Holder concentration on its own cadence.
+       *
+       * This is the one probe that costs RPC calls, and somebody accumulating a position is not a
+       * five-minute event, so it is read every WATCH.chainProbeMinutes rather than every pass. Between
+       * reads the last figure is carried forward: the condition it describes is still true, and the
+       * alert de-duplication is what stops a standing warning becoming a stream of them.
+       */
+      const chainDue = dueForChainProbe(h.lastChainCheckAt, now);
+      let topHolderShare = h.lastTopHolder;
+      let chainReadAt = h.lastChainCheckAt;
+      if (chainDue) {
+        const holders = await readHolders(h.mint, pairs?.poolAddresses ?? []).catch(() => null);
+        if (holders && !("unchecked" in holders)) {
+          topHolderShare = holders.topHolderShare;
+          chainReadAt = now;
+        } else if (holders) {
+          // Unattributable pool accounts: the same reason the screener declines to call it a whale.
+          chainReadAt = now;
+        }
+      }
+
       const obs: Observation = {
         liquidityUsd: pairs?.liquidityUsd ?? null,
         exitCost,
         // A quote of zero out is a blocked sale; a failed request is not, and must not raise the alarm.
         sellQuoted: sell ? !!sell.sellQuote && sell.sellQuote.probeOut > 0 : true,
-        topHolderShare: null,     // needs the chain; the four-hourly re-screen carries that one
+        topHolderShare,
         priceUsd: pairs?.priceUsd ?? null,
       };
       await db.tokenWatch.create({ data: { mint: h.mint, liquidityUsd: obs.liquidityUsd, exitCost: obs.exitCost, priceUsd: obs.priceUsd, sellQuoted: obs.sellQuoted } });
@@ -88,14 +110,16 @@ export async function watchHoldings(db: PrismaClient, opts: { now?: Date } = {})
         where: { id: h.id },
         data: {
           lastCheckedAt: now, lastLiquidityUsd: obs.liquidityUsd, lastExitCost: obs.exitCost, lastPriceUsd: obs.priceUsd,
+          lastTopHolder: topHolderShare, lastChainCheckAt: chainReadAt,
           ...(sent && worst ? { lastAlertKey: worst.key, lastAlertSeverity: worst.severity, lastAlertAt: now } : {}),
         },
       });
-      report.push({ mint: h.mint, alerts: alerts.length, sent });
+      report.push({ mint: h.mint, alerts: alerts.length, sent, chainRead: chainDue });
     } catch (e) {
       report.push({ mint: h.mint, alerts: 0, sent: false, note: (e as Error).message.slice(0, 80) });
     }
     await new Promise((r) => setTimeout(r, 300));
   }
-  return { watching: open.length, checked: report.length, alerted: report.filter((r) => r.sent).length, report };
+  return { watching: open.length, checked: report.length, alerted: report.filter((r) => r.sent).length,
+    chainReads: report.filter((r) => r.chainRead).length, report };
 }

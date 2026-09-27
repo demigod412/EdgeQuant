@@ -31,7 +31,22 @@ export const WATCH = {
   concentrationRise: 0.10,
   /** The same warning is not repeated inside this many hours unless it gets worse. */
   repeatAfterHours: 6,
+  /**
+   * How often holder concentration is re-read from the chain, in minutes.
+   *
+   * Everything else in the fast loop is keyless and therefore free, so it runs every few minutes. This
+   * one costs three RPC calls per holding, and accumulation is not a thing that happens in five minutes
+   * anyway — so it gets a slower cadence of its own rather than being left out or run at the fast rate.
+   * At half-hourly it is a few hundred calls a day per position: affordable for a real portfolio.
+   */
+  chainProbeMinutes: 30,
 } as const;
+
+/** Is this holding due a chain read? Never read one before counts as due. */
+export function dueForChainProbe(lastAt: Date | null | undefined, now = new Date()): boolean {
+  if (!lastAt) return true;
+  return now.getTime() - lastAt.getTime() >= WATCH.chainProbeMinutes * 60_000;
+}
 
 export type Severity = "critical" | "warning";
 

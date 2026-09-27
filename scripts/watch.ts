@@ -15,7 +15,7 @@ const db = new PrismaClient();
     console.log("Settings → unlock → Telegram alerts. Probes still run and the page still shows them.\n");
   }
   const r = await watchHoldings(db);
-  console.log(`${r.watching} holding${r.watching === 1 ? "" : "s"} watched, ${r.alerted} alert${r.alerted === 1 ? "" : "s"} sent`);
-  for (const x of r.report) console.log(`  ${x.mint}  ${x.alerts} finding(s)${x.sent ? " · alerted" : ""}${x.note ? ` · ${x.note}` : ""}`);
+  console.log(`${r.watching} holding${r.watching === 1 ? "" : "s"} watched, ${r.chainReads} chain read${r.chainReads === 1 ? "" : "s"}, ${r.alerted} alert${r.alerted === 1 ? "" : "s"} sent`);
+  for (const x of r.report) console.log(`  ${x.mint}  ${x.alerts} finding(s)${x.chainRead ? " · chain read" : ""}${x.sent ? " · alerted" : ""}${x.note ? ` · ${x.note}` : ""}`);
   if (!r.watching) console.log("\nAdd one on the Token screener page: mint, size, optional stop.");
 })().catch((e) => { console.error(e); process.exitCode = 1; }).finally(() => db.$disconnect());

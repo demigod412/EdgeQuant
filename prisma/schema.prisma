@@ -275,6 +275,10 @@ model TokenHolding {
   lastLiquidityUsd Float?
   lastExitCost     Float?
   lastPriceUsd     Float?
+  /// Holder concentration needs the chain, so it runs on its own slower cadence. Kept between probes so
+  /// the figure stays on screen and the trigger keeps working in the minutes between reads.
+  lastTopHolder    Float?
+  lastChainCheckAt DateTime?
 
   /// Alert de-duplication: the same warning is not resent every five minutes.
   lastAlertKey      String?

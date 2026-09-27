@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.1 — holder concentration in the watch loop, on its own cadence
+
+The fast loop could not see who was accumulating, because that needs the chain and everything else in it
+is keyless. Leaving it to the four-hourly re-screen was too slow; running it every five minutes would
+have been three RPC calls per holding per pass.
+
+So it has a cadence of its own: **every 30 minutes**, roughly 144 calls a day per position, which a real
+portfolio can carry. Somebody quietly building a position is not a five-minute event, so the slower rate
+costs nothing in practice.
+
+Between reads the last figure is **carried forward** rather than blanked. The condition it describes is
+still true, and alert de-duplication is what keeps a standing warning from becoming a stream of them —
+which is the same reason the repeat window exists at all. The top-holder share now shows on each holding
+as soon as it is known, and `npm run watch` reports how many chain reads a pass actually made.
+
 ## 0.10.0 — it watches what you hold, and tells you when to act
 
 The screener answered "should I buy this". Nothing answered "is what I bought still what I bought", and
