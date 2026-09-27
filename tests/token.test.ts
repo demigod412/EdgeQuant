@@ -6,6 +6,7 @@ import { AUTO_PROBE_USD, sellProbe } from "@/lib/token/probe";
 import { parseJupiterToken } from "@/lib/token/jupiterToken";
 import { parseMintInput } from "@/lib/token/mintInput";
 import { isPumpSwap, pumpswapLpMint } from "@/lib/token/pumpswap";
+import { POSITION_LAYOUTS, decodeLock, decodeSpread, lockSlice, spreadSlice, readU128LE, plausible, MAX_PLAUSIBLE_LIQUIDITY } from "@/lib/token/positionLayouts";
 import { CHECKPOINT_HOURS, SETTLE_HOURS } from "@/lib/token/horizons";
 import { parseRecent, selectCandidates, type Candidate } from "@/lib/token/discover";
 import { MAX_HOLD_HOURS } from "@/lib/instruments";
@@ -711,5 +712,89 @@ describe("concentrated pools, measured rather than shrugged at", () => {
     const r = rateEntry(checks, gradeScreen(checks), t);
     expect(r.rating).not.toBe("strong");
     expect(r.holdingBack.join(" ")).toMatch(/Liquidity locked/);
+  });
+});
+
+describe("decoding position accounts", () => {
+  /*
+   * The most consequential arithmetic in the screener: it decides the liquidity-lock verdict, and a
+   * wrong offset would yield a confident number rather than an error. Every offset here was computed
+   * by hand from the program's verbatim struct, and these tests exercise the guard that catches it
+   * being wrong anyway.
+   */
+  const u128 = (v: bigint) => { const b = Buffer.alloc(16); b.writeBigUInt64LE(v & ((1n << 64n) - 1n), 0); b.writeBigUInt64LE(v >> 64n, 8); return b; };
+
+  it("reads a little-endian u128 across both halves", () => {
+    expect(readU128LE(u128(0n))).toBe(0n);
+    expect(readU128LE(u128(12345n))).toBe(12345n);
+    expect(readU128LE(u128((1n << 64n) + 7n))).toBe((1n << 64n) + 7n);
+  });
+
+  it("measures concentration across Orca positions", () => {
+    const L = POSITION_LAYOUTS.wp;
+    const spread = decodeSpread([u128(700n), u128(200n), u128(100n)], L);
+    expect(spread).toEqual({ positions: 3, topShare: 0.7, name: "Orca Whirlpool" });
+  });
+
+  it("refuses to measure when the bytes do not look like liquidity", () => {
+    // What a wrong offset actually yields: pubkey bytes, effectively uniform across the u128 range.
+    const garbage = Buffer.from("f".repeat(32), "hex");
+    expect(decodeSpread([garbage], POSITION_LAYOUTS.wp)).toBeNull();
+    expect(plausible(MAX_PLAUSIBLE_LIQUIDITY)).toBe(false);
+    expect(plausible(MAX_PLAUSIBLE_LIQUIDITY - 1n)).toBe(true);
+  });
+
+  it("returns null for closed positions rather than claiming a spread", () => {
+    expect(decodeSpread([u128(0n), u128(0n)], POSITION_LAYOUTS.wp)).toBeNull();
+    expect(decodeSpread([], POSITION_LAYOUTS.wp)).toBeNull();
+  });
+
+  it("slices only the bytes each read needs", () => {
+    expect(spreadSlice(POSITION_LAYOUTS.wp)).toEqual({ offset: 72, length: 16 });
+    expect(spreadSlice(POSITION_LAYOUTS.clmm)).toEqual({ offset: 81, length: 16 });
+    // unlocked(152) through permanent(184)+16
+    expect(lockSlice(POSITION_LAYOUTS.dyn2)).toEqual({ offset: 152, length: 48 });
+  });
+
+  it("computes a real lock share for DAMM v2, counting vested as withdrawable", () => {
+    const L = POSITION_LAYOUTS.dyn2;
+    // Two positions: [unlocked, vested, permanent]
+    const pos = (u: bigint, v: bigint, p: bigint) => Buffer.concat([u128(u), u128(v), u128(p)]);
+    const m = decodeLock([pos(100n, 0n, 700n), pos(50n, 150n, 0n)], L);
+    // total 1000, permanent 700 -> 70% locked. Vested is not locked: it unlocks on a schedule.
+    expect(m?.lockedShare).toBe(0.7);
+    // Largest withdrawable position is 50+150 = 200 of 1000.
+    expect(m?.topHolderShare).toBe(0.2);
+    expect(m?.positions).toBe(2);
+  });
+
+  it("does not credit vested liquidity as locked", () => {
+    const pos = (u: bigint, v: bigint, p: bigint) => Buffer.concat([u128(u), u128(v), u128(p)]);
+    const m = decodeLock([pos(0n, 1000n, 0n)], POSITION_LAYOUTS.dyn2);
+    expect(m?.lockedShare).toBe(0);
+    expect(m?.topHolderShare).toBe(1);
+  });
+
+  it("rejects a lock read whose bytes are implausible", () => {
+    const bad = Buffer.concat([Buffer.from("f".repeat(32), "hex"), Buffer.alloc(32)]);
+    expect(decodeLock([bad], POSITION_LAYOUTS.dyn2)).toBeNull();
+  });
+
+  it("keeps every layout's offsets inside its account size", () => {
+    for (const [label, L] of Object.entries(POSITION_LAYOUTS)) {
+      expect(L.poolOffset + 32, `${label} pool field`).toBeLessThanOrEqual(L.size);
+      if (L.liqOffset) expect(L.liqOffset + 16, `${label} liquidity field`).toBeLessThanOrEqual(L.size);
+      if (L.locked) for (const [k, off] of Object.entries(L.locked)) {
+        expect(off + 16, `${label} ${k}`).toBeLessThanOrEqual(L.size);
+      }
+      // A layout must give one or the other, or it can measure nothing.
+      expect(!!L.liqOffset || !!L.locked, `${label} has no decodable field`).toBe(true);
+    }
+  });
+
+  it("leaves Meteora DLMM out, because its accounts are variable-sized", () => {
+    // Positions allocate more per-bin data as they grow, so a dataSize filter cannot target them and
+    // no verbatim struct was available to compute offsets from. Absent is the honest state.
+    expect(POSITION_LAYOUTS.dlmm).toBeUndefined();
   });
 });

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.2 — Raydium CLMM and Meteora DAMM v2 liquidity, decoded from verified layouts
+
+Every offset below was computed by hand from the program's **verbatim struct definition**, fetched from
+its own source. That mattered: asked for the DAMM v2 offsets directly, a summary returned 168/184/200,
+which is inconsistent with the field list it gave in the same answer — the correct values are 152/168/184.
+A summarised layout is not a layout.
+
+- **Raydium CLMM** — `PersonalPositionState`: `pool_id` at 41, `liquidity` at 81, account 281 bytes
+  (`8+1+32+32+4+4+16+16+16+8+8 + 24×3 + 64`). Borsh, so there is no alignment padding to allow for.
+  Reports position concentration, same as Orca.
+- **Meteora DAMM v2** — and this one answers the lock question properly rather than by proxy. Its
+  positions track `unlocked_liquidity`, `vested_liquidity` and `permanent_locked_liquidity` separately
+  (152 / 168 / 184, account 408), so a DAMM v2 pool now gets a genuine locked share and can **pass** the
+  check instead of only warning. Vested liquidity counts as **withdrawable, not locked**: it unlocks on a
+  schedule, and crediting a pool for a restriction that expires is the same error as treating an unknown
+  as a pass.
+- **Meteora DLMM is deliberately still absent.** Its positions allocate more per-bin data as they grow,
+  so the accounts are variable-sized and a `dataSize` filter cannot target them reliably — and no
+  verbatim struct was available to compute offsets from. It reports as unmeasured, which is true.
+
+**A guard against my own arithmetic.** The decoders live in `positionLayouts.ts`, apart from the RPC, so
+they can be tested against synthetic buffers — and every decoded value must fall below a plausibility
+ceiling of 2¹⁰⁰. Real pool liquidity is far below it; bytes read from a wrong offset are effectively
+uniform across the u128 range and clear it almost always. A wrong layout therefore returns *unmeasured*
+rather than a confident number, which is the only acceptable failure mode for this check.
+
 ## 0.9.1 — measuring a concentrated pool instead of shrugging at it
 
 - **The shortlist's mint addresses are copyable.** A shortlist you have to leave in order to act on is

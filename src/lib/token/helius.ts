@@ -1,5 +1,6 @@
 import "server-only";
 import { isPumpSwap, pumpswapLpMint } from "./pumpswap";
+import { POSITION_LAYOUTS, decodeLock, decodeSpread, lockSlice, spreadSlice, type PositionLayout } from "./positionLayouts";
 
 /*
  * The three checks that need indexed history rather than a single account read: whether the pool's LP
@@ -87,26 +88,37 @@ async function getJson<T>(url: string): Promise<T | null> {
  */
 const CONCENTRATED = new Set(["clmm", "dlmm", "wp", "whirlpool"]);
 
-/*
- * Where a concentrated pool's liquidity CAN be measured, position by position.
- *
- * "There is no LP token to lock" is true but incomplete. The risk an LP lock protects against is that
- * someone withdraws the liquidity under you, and in a concentrated pool that risk is still measurable:
- * if one position holds most of the pool, whoever owns it can pull most of the pool.
- *
- * Only layouts verified against the program's own source go in this table. An unverified decoder would
- * produce numbers rather than errors, and a confident wrong number is worse than an honest unknown —
- * which is why Raydium CLMM and Meteora DLMM are absent rather than guessed at.
- */
-const POSITION_LAYOUTS: Record<string, { program: string; size: number; poolOffset: number; liqOffset: number; name: string }> = {
-  // orca-so/whirlpools, programs/whirlpool/src/state/position.rs: LEN = 8 + 136 + 72 = 216, with
-  // whirlpool at 8 and liquidity (u128) at 72.
-  wp: { program: "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc", size: 216, poolOffset: 8, liqOffset: 72, name: "Orca Whirlpool" },
-};
+/** Every position account for one pool, sliced to just the bytes we decode. */
+async function positionAccounts(L: PositionLayout, pool: string, slice: { offset: number; length: number }) {
+  type Accounts = { account?: { data?: [string, string] | string } }[];
+  const res = await rpc<Accounts>("getProgramAccounts", [L.program, {
+    encoding: "base64",
+    dataSlice: slice,
+    filters: [{ dataSize: L.size }, { memcmp: { offset: L.poolOffset, bytes: pool } }],
+  }]).catch(() => null);
+  if (!Array.isArray(res) || !res.length) return null;
+  const bufs: Buffer[] = [];
+  for (const row of res) {
+    const raw = row?.account?.data;
+    const b64 = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof b64 !== "string") continue;
+    const buf = Buffer.from(b64, "base64");
+    if (buf.length >= slice.length) bufs.push(buf);
+  }
+  return bufs.length ? bufs : null;
+}
 
-/** Little-endian u128 out of a 16-byte buffer. */
-function readU128LE(buf: Buffer): bigint {
-  return buf.readBigUInt64LE(0) + (buf.readBigUInt64LE(8) << 64n);
+/**
+ * How much of a DAMM v2 pool can never be withdrawn.
+ *
+ * The one venue where a position-based pool answers the lock question directly. Vested liquidity counts
+ * as withdrawable, not locked: it unlocks on a schedule, so treating it as locked would credit the pool
+ * for a restriction that expires.
+ */
+async function dammV2Lock(L: PositionLayout, pool: string) {
+  if (!L.locked || !RPC()) return null;
+  const bufs = await positionAccounts(L, pool, lockSlice(L));
+  return bufs ? decodeLock(bufs, L) : null;
 }
 
 /**
@@ -117,32 +129,11 @@ function readU128LE(buf: Buffer): bigint {
  * evidence that no one can. The check wording says so rather than letting a reassuring number stand
  * unqualified.
  */
-async function positionSpread(label: string, pool: string): Promise<{ positions: number; topShare: number; name: string } | null> {
+async function positionSpread(label: string, pool: string) {
   const L = POSITION_LAYOUTS[label];
-  if (!L || !RPC()) return null;
-  type Accounts = { account?: { data?: [string, string] | string } }[];
-  const res = await rpc<Accounts>("getProgramAccounts", [L.program, {
-    encoding: "base64",
-    // Only the liquidity field comes back, so the response stays small however many positions exist.
-    dataSlice: { offset: L.liqOffset, length: 16 },
-    filters: [{ dataSize: L.size }, { memcmp: { offset: L.poolOffset, bytes: pool } }],
-  }]).catch(() => null);
-  if (!Array.isArray(res) || !res.length) return null;
-
-  let total = 0n, top = 0n, counted = 0;
-  for (const row of res) {
-    const raw = row?.account?.data;
-    const b64 = Array.isArray(raw) ? raw[0] : raw;
-    if (typeof b64 !== "string") continue;
-    const buf = Buffer.from(b64, "base64");
-    if (buf.length < 16) continue;
-    const liq = readU128LE(buf);
-    total += liq; counted++;
-    if (liq > top) top = liq;
-  }
-  // Positions all at zero liquidity are closed ones; there is nothing to measure and nothing to claim.
-  if (!counted || total === 0n) return null;
-  return { positions: counted, topShare: Number((top * 10_000n) / total) / 10_000, name: L.name };
+  if (!L?.liqOffset || !RPC()) return null;
+  const bufs = await positionAccounts(L, pool, spreadSlice(L));
+  return bufs ? decodeSpread(bufs, L) : null;
 }
 
 export async function lpLock(dexId: string | null, pairAddress: string | null, labels: string[] = []): Promise<
@@ -171,6 +162,20 @@ export async function lpLock(dexId: string | null, pairAddress: string | null, l
    *
    * Seeds and program id verified against pump-fun/pump-public-docs and the PumpSwap IDL.
    */
+  /*
+   * Meteora DAMM v2: the one position-based venue that records permanently locked liquidity, so the
+   * lock question gets a real answer here rather than a concentration proxy.
+   */
+  if (kinds.includes("dyn2")) {
+    await sleep(SPACING_MS);
+    const m = await dammV2Lock(POSITION_LAYOUTS.dyn2, pairAddress);
+    if (m) {
+      return { lockedShare: m.lockedShare, topHolderShare: m.topHolderShare,
+        note: `${m.name}: ${m.positions} position${m.positions === 1 ? "" : "s"}, measured from each one's permanently locked liquidity. Vested liquidity counts as withdrawable, since it unlocks on a schedule.` };
+    }
+    return { unchecked: "this Meteora DAMM v2 pool's positions could not be read, so how much of its liquidity is permanently locked is unknown" };
+  }
+
   // Concentrated liquidity: no LP token exists, and each position owner can pull their own share.
   const conc = kinds.find((k) => CONCENTRATED.has(k));
   if (conc) {
